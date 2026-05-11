@@ -20,7 +20,7 @@ Minecraft启动器(MCL Launcher)
 ## 📥 下载使用
 
 ### 方式一：直接下载 exe（推荐）
-👉 [**下载 MCL Launcher v1.0**](https://github.com/realmrkyng/MCL-Launcher/releases/latest)
+👉 [**下载 MCL Launcher v1.1**](https://github.com/realmrkyng/MCL-Launcher/releases/latest)
 
 无需安装 Python，双击即可运行。
 
