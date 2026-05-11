@@ -33,11 +33,35 @@ python main.py
 
 # 结构
 MCL-Launcher/
-├── src/               # 源代码
-├── main.py            # 主程序入口
-├── requirements.txt   # Python 依赖
-├── README.md          # 项目说明
-└── LICENSE            # MIT 许可证
+│
+├── main.py                      # 入口：from src.ui.app import LauncherGUI
+├── requirements.txt             # minecraft-launcher-lib>=6.5, customtkinter>=5.2.0
+├── build.bat                    # PyInstaller 打包脚本
+├── .gitignore
+├── README.md
+├── LICENSE
+│
+└── src/
+    │
+    ├── __init__.py              # 包声明
+    │
+    ├── constants.py             # APP_NAME / v1.1 / AUTHOR / GitHub URL / 路径配置
+    │
+    ├── i18n.py                  # 中英文翻译字典（~70 keys，T["cn"] / T["en"]）
+    │
+    ├── backend.py               # LauncherBackend：版本列表 / 下载 / 安装 / Java检测 / 启动命令
+    │
+    ├── update_checker.py        # UpdateChecker：GitHub 异步检查更新
+    │
+    └── ui/
+        │
+        ├── __init__.py
+        │
+        ├── app.py               # LauncherGUI 主类：窗口 / 页面切换 / 启动流程 / 配置 / 主题 / 动画
+        │
+        ├── pages.py             # PageBuilder：5页 UI 构建器（启动 / 下载 / 联机 / 设置 / 关于）
+        │
+        └── widgets.py           # 侧边栏 / 横幅 / 悬浮动画 / 点击反馈
 
 # 技术栈
 · Python 3.x
