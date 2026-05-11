@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 MCL Launcher — 五页 UI 构建器：启动 / 下载 / 联机 / 设置 / 关于
 """
@@ -9,6 +10,7 @@ from tkinter import messagebox
 from ..constants import APP_VERSION, AUTHOR_NAME, GITHUB_URL
 from ..backend import LauncherBackend
 from ..update_checker import UpdateChecker
+from .widgets import add_hover_animation, add_click_feedback
 
 
 class PageBuilder:
@@ -54,8 +56,11 @@ class PageBuilder:
         app.btn_launch = ctk.CTkButton(top_bar, text=self.t("launch_game"), height=46, width=190,
                                        font=ctk.CTkFont(size=16, weight="bold"),
                                        fg_color="#4CAF50", hover_color="#388E3C",
+                                       border_color="#81C784", border_width=2,
                                        corner_radius=10, command=app._on_launch)
         app.btn_launch.pack(side="right")
+        add_hover_animation(app.btn_launch, "#4CAF50", "#388E3C")
+        add_click_feedback(app.btn_launch)
 
         # ---- 卡片内容 ----
         card = ctk.CTkFrame(page, corner_radius=14)
@@ -91,6 +96,7 @@ class PageBuilder:
         app.btn_refresh = ctk.CTkButton(r2, text=self.t("refresh"), width=50, height=fh,
                                         font=ctk.CTkFont(size=12), command=app._refresh_versions)
         app.btn_refresh.pack(side="right")
+        add_hover_animation(app.btn_refresh)
 
         # ---- Java ----
         r3 = ctk.CTkFrame(inner, fg_color="transparent")
@@ -105,6 +111,7 @@ class PageBuilder:
         app.btn_scan_java = ctk.CTkButton(r3, text=self.t("scan"), width=50, height=fh,
                                           font=ctk.CTkFont(size=12), command=app._scan_java)
         app.btn_scan_java.pack(side="right")
+        add_hover_animation(app.btn_scan_java)
 
         # Java 提示（可点击）
         app.lbl_java_hint = ctk.CTkButton(inner, text="", font=ctk.CTkFont(size=11),
@@ -128,7 +135,7 @@ class PageBuilder:
         app.lbl_install_status.pack(anchor="w", padx=(lw + 5, 0), pady=(3, 0))
 
         # ---- 进度条 ----
-        app.progress = ctk.CTkProgressBar(inner, height=14, corner_radius=5)
+        app.progress = ctk.CTkProgressBar(inner, height=14, corner_radius=8)
         app.progress.pack(fill="x", pady=(10, 3))
         app.progress.set(0)
         app.lbl_status = ctk.CTkLabel(inner, text=self.t("status_ready"),
@@ -139,7 +146,7 @@ class PageBuilder:
         app.lbl_log_text = ctk.CTkLabel(inner, text=self.t("log_title"), anchor="w",
                                         font=ctk.CTkFont(size=12))
         app.lbl_log_text.pack(anchor="w", pady=(8, 4))
-        app.txt_log = ctk.CTkTextbox(inner, height=90, font=("Consolas", 11), wrap="word", corner_radius=8)
+        app.txt_log = ctk.CTkTextbox(inner, height=90, font=("Consolas", 11), wrap="word", corner_radius=10)
         app.txt_log.pack(fill="both", expand=True)
         app.txt_log.configure(state="disabled")
 
@@ -182,6 +189,7 @@ class PageBuilder:
                                            font=ctk.CTkFont(size=14),
                                            command=app._on_download_selected)
         app.btn_dl_install.pack(fill="x")
+        add_hover_animation(app.btn_dl_install)
 
         return page
 
@@ -212,11 +220,13 @@ class PageBuilder:
                                             font=ctk.CTkFont(size=14),
                                             command=lambda: messagebox.showinfo("MCL", self.t("multiplayer_wip")))
         app.btn_create_room.pack(fill="x", pady=(0, 10))
+        add_hover_animation(app.btn_create_room)
 
         app.btn_join_room = ctk.CTkButton(inner, text=self.t("joining_room"), height=44,
                                           font=ctk.CTkFont(size=14),
                                           command=lambda: messagebox.showinfo("MCL", self.t("multiplayer_wip")))
         app.btn_join_room.pack(fill="x")
+        add_hover_animation(app.btn_join_room)
 
         return page
 
@@ -309,6 +319,7 @@ class PageBuilder:
                                          font=ctk.CTkFont(size=13),
                                          command=app._microsoft_login)
         app.btn_ms_login.pack(side="left")
+        add_hover_animation(app.btn_ms_login)
         app.lbl_ms_status = ctk.CTkLabel(r3, text=self.t("ms_login_soon"),
                                          font=ctk.CTkFont(size=12), text_color="gray55")
         app.lbl_ms_status.pack(side="left", padx=15)

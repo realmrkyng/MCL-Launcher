@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 MCL Launcher — 主 GUI 类：窗口管理、页面切换、启动/下载流程、配置持久化
 """
@@ -55,6 +56,7 @@ class LauncherGUI:
         self.root.geometry("1000x700")
         self.root.minsize(800, 550)
 
+        self.root.attributes("-alpha", 0.0)
         self.root.update_idletasks()
         w, h = 1000, 700
         sw = self.root.winfo_screenwidth()
@@ -62,6 +64,8 @@ class LauncherGUI:
         x = (sw - w) // 2
         y = (sh - h) // 2
         self.root.geometry(f"{w}x{h}+{x}+{y}")
+
+        self._enable_window_shadow()
 
         self.current_page = None
 
@@ -83,6 +87,8 @@ class LauncherGUI:
         # 应用启动时的内存设置
         if self.auto_ram:
             self._update_ram_values()
+
+        self._fade_in()
 
     # ==================== 国际化 ====================
     def _(self, key, *args):
@@ -111,6 +117,26 @@ class LauncherGUI:
         except Exception:
             pass
 
+    # ==================== 动画 ====================
+    def _fade_in(self, step=0, steps=15):
+        self.root.attributes("-alpha", step / steps)
+        if step < steps:
+            self.root.after(20, lambda: self._fade_in(step + 1, steps))
+
+    # ==================== 窗口阴影 ====================
+    def _enable_window_shadow(self):
+        try:
+            import ctypes
+            hwnd = self.root.winfo_id()
+            DWMWA_NCRENDERING_POLICY = 2
+            DWMNCRP_ENABLED = 2
+            ctypes.windll.dwmapi.DwmSetWindowAttribute(
+                hwnd, DWMWA_NCRENDERING_POLICY,
+                ctypes.byref(ctypes.c_int(DWMNCRP_ENABLED)),
+                ctypes.sizeof(ctypes.c_int))
+        except Exception:
+            pass
+
     # ==================== 页面切换 ====================
     def _switch_page(self, name):
         for key, btn in self.nav_btns.items():
@@ -118,11 +144,34 @@ class LauncherGUI:
                 btn.configure(fg_color=("gray75", "gray25"), text_color=("gray10", "gray90"))
             else:
                 btn.configure(fg_color="transparent", text_color=("gray40", "gray70"))
-        if self.current_page:
-            self.current_page.pack_forget()
-        self.current_page = self.pages[name]
-        self.current_page.pack(fill="both", expand=True, padx=2, pady=2)
-        self._refresh_page_texts(name)
+
+        new_page = self.pages[name]
+        old_page = self.current_page
+
+        if old_page is None:
+            self.current_page = new_page
+            new_page.place(relx=0, rely=0, relwidth=1.0, relheight=1.0)
+            self._refresh_page_texts(name)
+            return
+
+        if old_page is new_page:
+            return
+
+        new_page.place(relx=1.0, rely=0, relwidth=1.0, relheight=1.0)
+
+        def animate(step=0, steps=10):
+            t = step / steps
+            old_page.place_configure(relx=-t * 0.3)
+            new_page.place_configure(relx=1.0 - t)
+            if step < steps:
+                self.root.after(20, lambda s=step+1: animate(s, steps))
+            else:
+                old_page.place_forget()
+                new_page.place_configure(relx=0)
+                self.current_page = new_page
+                self._refresh_page_texts(name)
+
+        animate()
 
     def _refresh_page_texts(self, name=None):
         if name is None:
@@ -185,9 +234,29 @@ class LauncherGUI:
     # ==================== 设置事件 ====================
     def _on_theme_changed(self, choice):
         mode = "dark" if choice == self._("theme_dark") else "light"
-        ctk.set_appearance_mode(mode)
-        self.config["theme"] = mode
-        self._save_config()
+
+        def fade_and_switch(step=0, phase="out", steps_out=6, steps_in=9):
+            if phase == "out":
+                t = step / steps_out
+                self.root.attributes("-alpha", 1.0 - 0.85 * t)
+                if step < steps_out:
+                    self.root.after(20, lambda s=step+1: fade_and_switch(s, "out", steps_out, steps_in))
+                    return
+                self.combo_theme.configure(state="disabled")
+                ctk.set_appearance_mode(mode)
+                self.config["theme"] = mode
+                self._save_config()
+                self.root.update_idletasks()
+                self.root.after(10, lambda: fade_and_switch(0, "in", steps_out, steps_in))
+            else:
+                t = step / steps_in
+                self.root.attributes("-alpha", 0.15 + 0.85 * t)
+                if step < steps_in:
+                    self.root.after(20, lambda s=step+1: fade_and_switch(s, "in", steps_out, steps_in))
+                else:
+                    self.combo_theme.configure(state="readonly")
+
+        fade_and_switch()
 
     def _on_lang_changed(self, choice):
         self.lang = "cn" if choice == self._("lang_cn") else "en"
@@ -264,6 +333,23 @@ class LauncherGUI:
             return
         messagebox.showinfo("MCL", self._("ms_login_soon"))
 
+    # ==================== 加载动画 ====================
+    def _start_spinner(self):
+        self._spinner_base = self._("launching_java")
+        self._spinner_step = 0
+        self._tick_spinner()
+
+    def _tick_spinner(self):
+        if not self.is_busy:
+            return
+        chars = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+        self.btn_launch.configure(text=f"  {chars[self._spinner_step % len(chars)]}  {self._spinner_base}")
+        self._spinner_step += 1
+        self.root.after(100, self._tick_spinner)
+
+    def _set_spinner_text(self, text):
+        self._spinner_base = text
+
     # ==================== 日志 / 进度 ====================
     def _log(self, msg):
         self.root.after(0, lambda: self._log_sync(msg))
@@ -279,7 +365,10 @@ class LauncherGUI:
 
     def _progress_set(self, cur, total):
         if total > 0:
-            self.root.after(0, lambda: self.progress.set(cur / total))
+            self.root.after(0, lambda: (
+                self.progress.configure(mode="determinate") if self.progress.cget("mode") != "determinate" else None,
+                self.progress.set(cur / total)
+            ))
 
     # ==================== 后台初始化 ====================
     def _init_backend(self):
@@ -498,14 +587,15 @@ class LauncherGUI:
             return
 
         self.is_busy = True
-        self.btn_launch.configure(state="disabled", text=self._("launching_java"))
+        self.btn_launch.configure(state="disabled")
+        self._start_spinner()
 
         def check_and_launch():
             java_path, java_ver = self._get_selected_java_path()
 
             if java_path and not os.path.isfile(java_path):
                 self._log(f"Java 路径已失效: {java_path}")
-                self.root.after(0, lambda: self.btn_launch.configure(text=self._("java_path_invalid")))
+                self.root.after(0, lambda: self._set_spinner_text(self._("java_path_invalid")))
                 self._refresh_java_list()
                 time.sleep(0.3)
                 java_path, java_ver = self._get_selected_java_path()
@@ -548,7 +638,7 @@ class LauncherGUI:
             if self.version_isolation:
                 self._log(f"版本隔离: ON → {self._get_effective_minecraft_dir(version)}")
 
-            self.root.after(0, lambda: self.btn_launch.configure(text=self._("launching_game")))
+            self.root.after(0, lambda: self._set_spinner_text(self._("launching_game")))
 
             mc_dir = self._get_effective_minecraft_dir(version)
             self.backend.set_minecraft_dir(mc_dir)
@@ -589,7 +679,8 @@ class LauncherGUI:
         self.btn_scan_java.configure(state="disabled")
         self.combo_version.configure(state="disabled")
         self.combo_java.configure(state="disabled")
-        self.progress.set(0)
+        self.progress.configure(mode="indeterminate")
+        self.progress.start()
 
         max_val = [100]
         cur_val = [0]
@@ -628,7 +719,7 @@ class LauncherGUI:
                 self.root.after(0, lambda: self.btn_scan_java.configure(state="normal"))
                 self.root.after(0, lambda: self.combo_version.configure(state="readonly"))
                 self.root.after(0, lambda: self.combo_java.configure(state="readonly"))
-                self.root.after(0, lambda: self.progress.set(0))
+                self.root.after(0, lambda: (self.progress.stop(), self.progress.configure(mode="determinate"), self.progress.set(0)))
 
         threading.Thread(target=task, daemon=True).start()
 
