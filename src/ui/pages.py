@@ -10,7 +10,7 @@ from tkinter import messagebox
 from ..constants import APP_VERSION, AUTHOR_NAME, GITHUB_URL
 from ..backend import LauncherBackend
 from ..update_checker import UpdateChecker
-from .widgets import add_hover_animation, add_click_feedback
+from .widgets import add_hover_animation, add_click_feedback, ACCENT, CARD_BG
 
 
 class PageBuilder:
@@ -53,7 +53,7 @@ class PageBuilder:
         app.lbl_login_status.pack(anchor="w", pady=(2, 0))
 
         # 绿色启动按钮 — 右上角显眼位置
-        app.btn_launch = ctk.CTkButton(top_bar, text=self.t("launch_game"), height=46, width=190,
+        app.btn_launch = ctk.CTkButton(top_bar, text=self.t("launch_game"), height=50, width=200,
                                        font=ctk.CTkFont(size=16, weight="bold"),
                                        fg_color="#4CAF50", hover_color="#388E3C",
                                        border_color="#81C784", border_width=2,
@@ -63,7 +63,7 @@ class PageBuilder:
         add_click_feedback(app.btn_launch)
 
         # ---- 卡片内容 ----
-        card = ctk.CTkFrame(page, corner_radius=14)
+        card = ctk.CTkFrame(page, corner_radius=12, fg_color=("#F5F5F5", CARD_BG))
         card.pack(pady=(5, 8), padx=padx, fill="both", expand=True)
 
         inner = ctk.CTkFrame(card, fg_color="transparent")
@@ -90,7 +90,7 @@ class PageBuilder:
         app.lbl_version_text.pack(side="left")
         app.combo_version = ctk.CTkComboBox(r2, values=[self.t("loading")], height=fh,
                                             font=ctk.CTkFont(size=13), state="readonly",
-                                            command=app._on_version_changed)
+                                            corner_radius=6, command=app._on_version_changed)
         app.combo_version.set(self.t("loading"))
         app.combo_version.pack(side="left", fill="x", expand=True, padx=(5, 8))
         app.btn_refresh = ctk.CTkButton(r2, text=self.t("refresh"), width=50, height=fh,
@@ -105,7 +105,8 @@ class PageBuilder:
                                          font=ctk.CTkFont(size=13))
         app.lbl_java_text.pack(side="left")
         app.combo_java = ctk.CTkComboBox(r3, values=[self.t("loading")], height=fh,
-                                         font=ctk.CTkFont(size=13), state="readonly")
+                                         font=ctk.CTkFont(size=13), state="readonly",
+                                         corner_radius=6)
         app.combo_java.set(self.t("loading"))
         app.combo_java.pack(side="left", fill="x", expand=True, padx=(5, 8))
         app.btn_scan_java = ctk.CTkButton(r3, text=self.t("scan"), width=50, height=fh,
@@ -126,7 +127,8 @@ class PageBuilder:
                                         font=ctk.CTkFont(size=13))
         app.lbl_ram_text.pack(side="left")
         app.combo_ram = ctk.CTkComboBox(r4, values=["1 GB", "2 GB", "4 GB", "6 GB", "8 GB", "12 GB", "16 GB"],
-                                        height=fh, font=ctk.CTkFont(size=13), state="readonly")
+                                        height=fh, font=ctk.CTkFont(size=13), state="readonly",
+                                        corner_radius=6)
         app.combo_ram.set("4 GB")
         app.combo_ram.pack(side="left", fill="x", expand=True, padx=(5, 0))
 
@@ -170,7 +172,7 @@ class PageBuilder:
                                         font=ctk.CTkFont(size=20, weight="bold"))
         app.lbl_dl_title.pack(pady=(20, 12), padx=padx, anchor="w")
 
-        card = ctk.CTkFrame(page, corner_radius=14)
+        card = ctk.CTkFrame(page, corner_radius=12, fg_color=("#F5F5F5", CARD_BG))
         card.pack(pady=(5, 8), padx=padx, fill="both", expand=True)
         inner = ctk.CTkFrame(card, fg_color="transparent")
         inner.pack(pady=18, padx=25, fill="both", expand=True)
@@ -206,7 +208,7 @@ class PageBuilder:
                                         font=ctk.CTkFont(size=20, weight="bold"))
         app.lbl_mp_title.pack(pady=(20, 25), padx=padx, anchor="w")
 
-        card = ctk.CTkFrame(page, corner_radius=14)
+        card = ctk.CTkFrame(page, corner_radius=12, fg_color=("#F5F5F5", CARD_BG))
         card.pack(pady=(5, 8), padx=padx, fill="both", expand=True)
         inner = ctk.CTkFrame(card, fg_color="transparent")
         inner.pack(pady=50, padx=40, fill="both", expand=True)
@@ -243,7 +245,7 @@ class PageBuilder:
                                          font=ctk.CTkFont(size=20, weight="bold"))
         app.lbl_set_title.pack(pady=(20, 12), padx=padx, anchor="w")
 
-        card = ctk.CTkFrame(page, corner_radius=14)
+        card = ctk.CTkFrame(page, corner_radius=12, fg_color=("#F5F5F5", CARD_BG))
         card.pack(pady=(5, 8), padx=padx, fill="both", expand=True)
         inner = ctk.CTkFrame(card, fg_color="transparent")
         inner.pack(pady=20, padx=30, fill="both", expand=True)
@@ -338,7 +340,7 @@ class PageBuilder:
                                         font=ctk.CTkFont(size=20, weight="bold"))
         app.lbl_ab_title.pack(pady=(20, 12), padx=padx, anchor="w")
 
-        card = ctk.CTkFrame(page, corner_radius=14)
+        card = ctk.CTkFrame(page, corner_radius=12, fg_color=("#F5F5F5", CARD_BG))
         card.pack(pady=(5, 8), padx=padx, fill="both", expand=True)
         inner = ctk.CTkFrame(card, fg_color="transparent")
         inner.pack(pady=30, padx=35, fill="both", expand=True)

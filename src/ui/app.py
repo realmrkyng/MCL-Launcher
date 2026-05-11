@@ -16,7 +16,9 @@ from ..constants import APP_NAME, APP_VERSION, DEFAULT_RAM, GITHUB_URL, MINECRAF
 from ..i18n import T
 from ..backend import LauncherBackend
 from ..update_checker import UpdateChecker
-from .widgets import build_banner, build_sidebar
+from .widgets import (build_banner, build_sidebar, Tween,
+                       ease_out_cubic, ease_in_out_cubic, ease_out_expo,
+                       ACCENT, CARD_BG, TEXT_MUTED, NAV_ACTIVE, NAV_HOVER)
 from .pages import PageBuilder
 
 
@@ -52,7 +54,7 @@ class LauncherGUI:
 
         # 窗口
         self.root = ctk.CTk()
-        self.root.title(APP_NAME)
+        self.root.title(f"{APP_NAME} v{APP_VERSION}")
         self.root.geometry("1000x700")
         self.root.minsize(800, 550)
 
@@ -71,9 +73,12 @@ class LauncherGUI:
 
         # 构建 UI
         self.banner_frame, self.lbl_banner = build_banner(self.root, self._)
-        self.sidebar, self.nav_btns = build_sidebar(self.root, self._, self._switch_page)
+        self.sidebar, self.nav_btns, self.nav_indicators = build_sidebar(self.root, self._, self._switch_page)
 
-        self.main_area = ctk.CTkFrame(self.root, fg_color="transparent")
+        # 底部状态栏
+        self._build_statusbar()
+
+        self.main_area = ctk.CTkFrame(self.root, fg_color=("gray93", CARD_BG))
         self.main_area.pack(side="left", fill="both", expand=True)
 
         self.page_builder = PageBuilder(self)
@@ -117,11 +122,61 @@ class LauncherGUI:
         except Exception:
             pass
 
+    # ==================== 底部状态栏 ====================
+    def _build_statusbar(self):
+        ctk.CTkFrame(self.root, height=1,
+                     fg_color=("gray75", "#3A3A3A")).pack(side="bottom", fill="x")
+        bar = ctk.CTkFrame(self.root, height=30, corner_radius=0,
+                           fg_color=("gray90", CARD_BG))
+        bar.pack(side="bottom", fill="x")
+        bar.pack_propagate(False)
+
+        self.lbl_statusbar_java = ctk.CTkLabel(
+            bar, text="☕ Java 检测中...",
+            font=ctk.CTkFont(size=11), text_color=("gray50", TEXT_MUTED), anchor="w")
+        self.lbl_statusbar_java.pack(side="left", padx=12)
+
+        self.lbl_statusbar_ram = ctk.CTkLabel(
+            bar, text="💾 内存: --",
+            font=ctk.CTkFont(size=11), text_color=("gray50", TEXT_MUTED), anchor="e")
+        self.lbl_statusbar_ram.pack(side="right", padx=12)
+
+    def _update_statusbar(self):
+        if self.java_list:
+            best = self.java_list[0]
+            ver = best["version"]
+            self.root.after(0, lambda: self.lbl_statusbar_java.configure(
+                text=f"☕ Java {ver} 已就绪", text_color=("#2E7D32", "#4CAF50")))
+        else:
+            self.root.after(0, lambda: self.lbl_statusbar_java.configure(
+                text="❌ 未检测到 Java", text_color=("#C62828", "#FF5252")))
+
+        if self.auto_ram:
+            ram = max(1, round(self.recommended_ram))
+        else:
+            try:
+                ram = int(self.combo_ram.get().replace("GB", "").strip())
+            except Exception:
+                ram = 0
+        if ram:
+            self.root.after(0, lambda: self.lbl_statusbar_ram.configure(
+                text=f"💾 内存: {ram} GB"))
+
     # ==================== 动画 ====================
-    def _fade_in(self, step=0, steps=15):
-        self.root.attributes("-alpha", step / steps)
-        if step < steps:
-            self.root.after(20, lambda: self._fade_in(step + 1, steps))
+    def _fade_in(self):
+        self.root.attributes("-alpha", 0.0)
+        start = __import__("time").perf_counter()
+        duration = 0.32  # seconds
+
+        def tick():
+            t = min(1.0, (__import__("time").perf_counter() - start) / duration)
+            # ease-out-cubic
+            eased = 1 - (1 - t) ** 3
+            self.root.attributes("-alpha", eased)
+            if t < 1.0:
+                self.root.after(16, tick)
+
+        self.root.after(16, tick)
 
     # ==================== 窗口阴影 ====================
     def _enable_window_shadow(self):
@@ -141,9 +196,13 @@ class LauncherGUI:
     def _switch_page(self, name):
         for key, btn in self.nav_btns.items():
             if key == name:
-                btn.configure(fg_color=("gray75", "gray25"), text_color=("gray10", "gray90"))
+                btn.configure(fg_color=("gray80", NAV_ACTIVE),
+                              text_color=(ACCENT, ACCENT))
+                self.nav_indicators[key].configure(fg_color=(ACCENT, ACCENT))
             else:
-                btn.configure(fg_color="transparent", text_color=("gray40", "gray70"))
+                btn.configure(fg_color="transparent",
+                              text_color=("gray40", TEXT_MUTED))
+                self.nav_indicators[key].configure(fg_color="transparent")
 
         new_page = self.pages[name]
         old_page = self.current_page
@@ -159,24 +218,29 @@ class LauncherGUI:
 
         new_page.place(relx=1.0, rely=0, relwidth=1.0, relheight=1.0)
 
-        def animate(step=0, steps=10):
-            t = step / steps
-            old_page.place_configure(relx=-t * 0.3)
-            new_page.place_configure(relx=1.0 - t)
-            if step < steps:
-                self.root.after(20, lambda s=step+1: animate(s, steps))
+        import time as _time
+        _start = _time.perf_counter()
+        _dur = 0.22  # seconds
+
+        def _tick():
+            t = min(1.0, (_time.perf_counter() - _start) / _dur)
+            eased = 1 - (1 - t) ** 3  # ease-out-cubic
+            old_page.place_configure(relx=-eased * 0.28)
+            new_page.place_configure(relx=1.0 - eased)
+            if t < 1.0:
+                self.root.after(16, _tick)
             else:
                 old_page.place_forget()
                 new_page.place_configure(relx=0)
                 self.current_page = new_page
                 self._refresh_page_texts(name)
 
-        animate()
+        _tick()
 
     def _refresh_page_texts(self, name=None):
         if name is None:
             name = list(self.nav_btns.keys())[0] if self.nav_btns else "launch"
-        icons = {"launch": "🚀", "download": "📥", "multiplayer": "🌐", "settings": "⚙", "about": "ℹ"}
+        icons = {"launch": "🏠", "download": "📥", "multiplayer": "🔌", "settings": "⚙️", "about": "ℹ️"}
         for key, btn in self.nav_btns.items():
             btn.configure(text=f"  {icons[key]}  {self._(key)}")
 
@@ -234,29 +298,33 @@ class LauncherGUI:
     # ==================== 设置事件 ====================
     def _on_theme_changed(self, choice):
         mode = "dark" if choice == self._("theme_dark") else "light"
+        import time as _t
 
-        def fade_and_switch(step=0, phase="out", steps_out=6, steps_in=9):
-            if phase == "out":
-                t = step / steps_out
-                self.root.attributes("-alpha", 1.0 - 0.85 * t)
-                if step < steps_out:
-                    self.root.after(20, lambda s=step+1: fade_and_switch(s, "out", steps_out, steps_in))
-                    return
-                self.combo_theme.configure(state="disabled")
-                ctk.set_appearance_mode(mode)
-                self.config["theme"] = mode
-                self._save_config()
-                self.root.update_idletasks()
-                self.root.after(10, lambda: fade_and_switch(0, "in", steps_out, steps_in))
-            else:
-                t = step / steps_in
-                self.root.attributes("-alpha", 0.15 + 0.85 * t)
-                if step < steps_in:
-                    self.root.after(20, lambda s=step+1: fade_and_switch(s, "in", steps_out, steps_in))
-                else:
-                    self.combo_theme.configure(state="readonly")
+        def _fade(phase, on_done=None):
+            start = _t.perf_counter()
+            dur = 0.12 if phase == "out" else 0.20
 
-        fade_and_switch()
+            def tick():
+                p = min(1.0, (_t.perf_counter() - start) / dur)
+                eased = 1 - (1 - p) ** 3
+                alpha = (1.0 - 0.85 * eased) if phase == "out" else (0.15 + 0.85 * eased)
+                self.root.attributes("-alpha", alpha)
+                if p < 1.0:
+                    self.root.after(16, tick)
+                elif on_done:
+                    on_done()
+
+            tick()
+
+        def _switch():
+            self.combo_theme.configure(state="disabled")
+            ctk.set_appearance_mode(mode)
+            self.config["theme"] = mode
+            self._save_config()
+            self.root.update_idletasks()
+            self.root.after(10, lambda: _fade("in", lambda: self.combo_theme.configure(state="readonly")))
+
+        _fade("out", _switch)
 
     def _on_lang_changed(self, choice):
         self.lang = "cn" if choice == self._("lang_cn") else "en"
@@ -303,6 +371,7 @@ class LauncherGUI:
         else:
             self.combo_ram.configure(state="readonly")
             self.lbl_ram_text.configure(text=self._("ram"))
+        self._update_statusbar()
 
     def _update_ram_display(self):
         if self.auto_ram:
@@ -488,6 +557,7 @@ class LauncherGUI:
                 self.root.after(0, lambda: self.combo_java.configure(values=[self._("not_found_java")]))
                 self.root.after(0, lambda: self.combo_java.set(self._("not_found_java")))
                 self._update_java_no_found_hint()
+            self._update_statusbar()
         except Exception as e:
             self._log(f"扫描 Java 失败: {e}")
 
@@ -500,11 +570,71 @@ class LauncherGUI:
 
     def _on_java_hint_click(self):
         if not self.java_list:
-            self._show_java_download_guide()
+            self._prompt_auto_download_java()
 
-    def _show_java_download_guide(self):
-        messagebox.showinfo(self._("java_download_title"), self._("java_not_found_msg"))
-        webbrowser.open("https://adoptium.net/download/")
+    def _prompt_auto_download_java(self):
+        version = self.combo_version.get()
+        if not version or version in (self._("loading"), self._("fetch_failed")):
+            version = "1.21"
+        if messagebox.askyesno(
+            self._("java_download_title"),
+            f"未检测到 Java，是否自动下载适合 Minecraft {version} 的 Java 运行时？\n\n"
+            "（将通过 Mojang 官方源下载，约 100-200 MB）"
+        ):
+            self._auto_download_java(version)
+        else:
+            webbrowser.open("https://adoptium.net/download/")
+
+    def _auto_download_java(self, mc_version):
+        if self.is_busy:
+            return
+        self.is_busy = True
+        self.btn_launch.configure(state="disabled")
+        self.btn_scan_java.configure(state="disabled")
+        self.progress.configure(mode="indeterminate")
+        self.progress.start()
+        self._status("正在下载 Java 运行时...")
+        self._log(f"开始自动下载适合 MC {mc_version} 的 Java...")
+
+        max_val = [100]
+
+        def cb_set_status(s):
+            self._log(s)
+            self._status(s)
+
+        def cb_set_progress(p):
+            self._progress_set(p, max_val[0])
+
+        def cb_set_max(m):
+            max_val[0] = m
+
+        callback = {
+            "setStatus": cb_set_status,
+            "setProgress": cb_set_progress,
+            "setMax": cb_set_max,
+        }
+
+        def task():
+            path, err = self.backend.auto_install_java(mc_version, callback=callback)
+            self.is_busy = False
+            self.root.after(0, lambda: self.progress.stop())
+            self.root.after(0, lambda: self.progress.configure(mode="determinate"))
+            self.root.after(0, lambda: self.progress.set(0))
+            self.root.after(0, lambda: self.btn_launch.configure(state="normal", text=self._("launch_game")))
+            self.root.after(0, lambda: self.btn_scan_java.configure(state="normal"))
+            if path:
+                self._log(f"Java 下载完成: {path}")
+                self._status("Java 下载完成，正在重新扫描...")
+                self._refresh_java_list()
+            else:
+                self._log(f"Java 下载失败: {err}")
+                self._status("Java 下载失败")
+                self.root.after(0, lambda: messagebox.showerror(
+                    "下载失败",
+                    f"Java 自动下载失败：{err}\n\n请手动安装：https://adoptium.net/download/"
+                ))
+
+        threading.Thread(target=task, daemon=True).start()
 
     def _scan_java(self):
         if self.is_busy:
@@ -654,8 +784,10 @@ class LauncherGUI:
         self.is_busy = False
         self.btn_launch.configure(state="normal", text=self._("launch_game"))
         self._status(self._("launch_failed"))
-        self._update_java_no_found_hint()
-        self._show_java_download_guide()
+        version = self.combo_version.get()
+        if not version or version in (self._("loading"), self._("fetch_failed")):
+            version = "1.21"
+        self._prompt_auto_download_java()
 
     def _on_launch_error(self, title, msg):
         self.is_busy = False
