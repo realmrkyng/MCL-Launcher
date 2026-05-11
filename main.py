@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 MCL Launcher — 入口
     python -m src.main
