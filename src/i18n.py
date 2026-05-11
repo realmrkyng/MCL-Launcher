@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 MCL Launcher — 国际化文本（中文 / English）
 """

@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 MCL Launcher — 全局常量 & 路径配置
 """
@@ -6,7 +7,7 @@ import platform
 from pathlib import Path
 
 APP_NAME = "MCL Launcher"
-APP_VERSION = "v1.0"
+APP_VERSION = "v1.1"
 AUTHOR_NAME = "MrKyng"
 GITHUB_URL = "https://github.com/realmrkyng"
 UPDATE_URL = "https://raw.githubusercontent.com/realmrkyng/MCL/main/version.txt"

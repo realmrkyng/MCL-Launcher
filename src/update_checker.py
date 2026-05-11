@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 MCL Launcher — GitHub 版本更新检查
 """
