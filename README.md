@@ -1,6 +1,6 @@
-# MCL-Launcher
-Minecraft启动器(MCL Launcher)
+# MCL-Launcher  
 Minecraft 是一款值得购买的游戏，请支持正版。    
+Minecraft启动器(MCL Launcher)  
 本启动器仅供学习交流，游戏文件请通过官方启动器或正版账号获取。  
 一个简洁、开源的 **Minecraft 启动器**，支持离线下载、自动 Java 检测、版本隔离、内存自动分配、中英双语、黑白主题。
  
