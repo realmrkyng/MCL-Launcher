@@ -68,13 +68,34 @@ class LauncherBackend:
 
     def get_installed_jre_path(self, runtime_name):
         exe = "javaw.exe" if platform.system() == "Windows" else "java"
-        p = os.path.join(self.minecraft_dir, "runtime", runtime_name, "bin", exe)
-        if os.path.isfile(p):
-            return p
-        p2 = os.path.join(self.minecraft_dir, "runtime", runtime_name, "bin", "java")
-        if os.path.isfile(p2):
-            return p2
+        base = Path(self.minecraft_dir) / "runtime" / runtime_name
+        # 搜索所有 bin/javaw.exe 或 bin/java
+        for candidate in base.rglob(exe):
+            if candidate.parent.name == "bin":
+                return str(candidate)
+        for candidate in base.rglob("java"):
+            if candidate.parent.name == "bin" and candidate.is_file():
+                return str(candidate)
         return None
+
+    def auto_install_java(self, mc_version, callback=None):
+        """根据 MC 版本自动下载对应 JRE，返回安装后的 java 路径，失败返回 None"""
+        min_ver = self.get_min_java_for_mc(mc_version)
+        # mll runtime 名称 → 对应 Java 主版本
+        runtime_map = [
+            ("java-runtime-delta",   21),
+            ("java-runtime-gamma",   17),
+            ("java-runtime-beta",    16),
+            ("java-runtime-alpha",   16),
+            ("jre-legacy",            8),
+        ]
+        runtime = next((r for r, v in runtime_map if v >= min_ver), "java-runtime-gamma")
+        try:
+            mll.runtime.install_jvm_runtime(runtime, self.minecraft_dir, callback=callback)
+        except Exception as e:
+            return None, str(e)
+        path = self.get_installed_jre_path(runtime)
+        return path, None
 
     # ---- Java 版本解析 ----
     @staticmethod
@@ -110,149 +131,176 @@ class LauncherBackend:
     # ---- Java 全面扫描 ----
     @staticmethod
     def find_all_java():
-        found = {}
-        exe_name = "javaw.exe" if platform.system() == "Windows" else "java"
         is_win = platform.system() == "Windows"
         is_mac = platform.system() == "Darwin"
+        exe_name = "javaw.exe" if is_win else "java"
+
+        # 规范化路径：解析符号链接 + 大小写统一，用于去重
+        def _norm(p):
+            try:
+                return str(Path(p).resolve())
+            except Exception:
+                return str(p)
+
+        found = {}  # norm_path -> (real_path, ver, source_label)
+
+        def _add(path, source):
+            path = str(path)
+            if not os.path.isfile(path):
+                return
+            key = _norm(path)
+            if key in found:
+                return
+            ver, _ = LauncherBackend._parse_java_version(path)
+            found[key] = (path, ver, source)
 
         # 1. minecraft-launcher-lib 自动检测
-        auto = mll.utils.get_java_executable()
-        if auto:
-            ver, _ = LauncherBackend._parse_java_version(auto)
-            found[auto] = (ver, f"Java {ver} | {auto}" if ver else f"Java (auto) | {auto}")
-
-        # 2. JAVA_HOME 环境变量
-        java_home = os.environ.get("JAVA_HOME", "")
-        if java_home:
-            p = Path(java_home) / "bin" / exe_name
-            if p.exists():
-                path = str(p)
-                if path not in found:
-                    ver, _ = LauncherBackend._parse_java_version(path)
-                    found[path] = (ver, f"Java {ver} (JAVA_HOME) | {path}" if ver else f"Java (JAVA_HOME) | {path}")
-
-        # 3. PATH 环境变量
         try:
-            which = subprocess.run(["where" if is_win else "which", "java"],
-                                   capture_output=True, text=True, timeout=5)
-            for line in which.stdout.strip().split("\n"):
-                line = line.strip()
-                if line and line not in found:
-                    ver, _ = LauncherBackend._parse_java_version(line)
-                    found[line] = (ver, f"Java {ver} (PATH) | {line}" if ver else f"Java (PATH) | {line}")
+            auto = mll.utils.get_java_executable()
+            if auto:
+                _add(auto, "mll")
         except Exception:
             pass
 
-        # 4. macOS /usr/libexec/java_home
-        if is_mac:
-            try:
-                result = subprocess.run(["/usr/libexec/java_home", "-V"],
-                                       capture_output=True, text=True, timeout=10)
-                for line in result.stderr.splitlines():
-                    if line.strip():
-                        m = re.search(r'([^\s]+)\s+".+"\s+"(.+)"', line)
-                        if m and "jdk" in line.lower():
-                            vm_path = m.group(1)
-                            java_exe = os.path.join(vm_path, "Contents", "Home", "bin", exe_name)
-                            if os.path.isfile(java_exe) and java_exe not in found:
-                                ver, _ = LauncherBackend._parse_java_version(java_exe)
-                                found[java_exe] = (ver, f"Java {ver} (macOS) | {java_exe}" if ver else f"Java (macOS) | {java_exe}")
-            except Exception:
-                pass
+        # 2. JAVA_HOME
+        java_home = os.environ.get("JAVA_HOME", "")
+        if java_home:
+            _add(Path(java_home) / "bin" / exe_name, "JAVA_HOME")
 
-        # 5. Windows 注册表
+        # 3. PATH（where/which 找到的所有条目）
+        try:
+            cmd = ["where", "java", "javaw"] if is_win else ["which", "-a", "java"]
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+            for line in r.stdout.strip().splitlines():
+                line = line.strip()
+                if line:
+                    _add(line, "PATH")
+        except Exception:
+            pass
+
+        # 4. Windows 注册表（含 WOW6432Node 镜像）
         if is_win and winreg:
-            reg_keys = [
+            reg_roots = [
                 (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\JavaSoft\Java Runtime Environment"),
                 (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\JavaSoft\Java Development Kit"),
                 (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\JavaSoft\JDK"),
+                (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\JavaSoft\JRE"),
                 (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Eclipse Adoptium\JDK"),
+                (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Eclipse Adoptium\JRE"),
                 (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Eclipse Foundation\JDK"),
                 (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Eclipse Temurin\JDK"),
                 (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\JDK"),
+                (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Azul Systems\Zulu"),
+                (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Amazon Corretto\JDK"),
+                (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\BellSoft\Liberica JDK"),
+                (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\WOW6432Node\JavaSoft\Java Runtime Environment"),
+                (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\WOW6432Node\JavaSoft\Java Development Kit"),
+                (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\WOW6432Node\JavaSoft\JDK"),
+                (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\WOW6432Node\Eclipse Adoptium\JDK"),
+                (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\WOW6432Node\Eclipse Temurin\JDK"),
+                (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\WOW6432Node\Microsoft\JDK"),
             ]
-            for root_key, sub_path in reg_keys:
-                try:
-                    key = winreg.OpenKey(root_key, sub_path)
+
+            def _probe_reg_key(key):
+                for val_name in ("JavaHome", "Path", "InstallDir"):
                     try:
-                        java_home_reg, _ = winreg.QueryValueEx(key, "JavaHome")
-                        if java_home_reg:
-                            p = Path(java_home_reg) / "bin" / exe_name
-                            if p.exists():
-                                path = str(p)
-                                if path not in found:
-                                    ver, _ = LauncherBackend._parse_java_version(path)
-                                    found[path] = (ver, f"Java {ver} (Registry) | {path}" if ver else f"Java (Registry) | {path}")
+                        home, _ = winreg.QueryValueEx(key, val_name)
+                        if home:
+                            _add(Path(home) / "bin" / exe_name, "Registry")
+                            _add(Path(home) / "bin" / "java.exe", "Registry")
                     except Exception:
                         pass
+
+            for root_key, sub_path in reg_roots:
+                try:
+                    key = winreg.OpenKey(root_key, sub_path,
+                                        access=winreg.KEY_READ | winreg.KEY_WOW64_64KEY)
+                    _probe_reg_key(key)
+                    # 枚举子版本键（如 "21.0.3"）
                     try:
                         for i in range(winreg.QueryInfoKey(key)[0]):
-                            sub_name = winreg.EnumKey(key, i)
                             try:
-                                sub_key = winreg.OpenKey(key, sub_name)
-                                java_home_reg, _ = winreg.QueryValueEx(sub_key, "JavaHome")
-                                if java_home_reg:
-                                    p = Path(java_home_reg) / "bin" / exe_name
-                                    if p.exists():
-                                        path = str(p)
-                                        if path not in found:
-                                            ver, _ = LauncherBackend._parse_java_version(path)
-                                            found[path] = (ver, f"Java {ver} (Registry) | {path}" if ver else f"Java (Registry) | {path}")
+                                sub_key = winreg.OpenKey(key, winreg.EnumKey(key, i))
+                                _probe_reg_key(sub_key)
+                                winreg.CloseKey(sub_key)
                             except Exception:
                                 pass
-                    except Exception:
-                        pass
-                    try:
-                        path_reg, _ = winreg.QueryValueEx(key, "Path")
-                        if path_reg:
-                            p = Path(path_reg) / "bin" / exe_name
-                            if p.exists():
-                                path = str(p)
-                                if path not in found:
-                                    ver, _ = LauncherBackend._parse_java_version(path)
-                                    found[path] = (ver, f"Java {ver} (Registry) | {path}" if ver else f"Java (Registry) | {path}")
                     except Exception:
                         pass
                     winreg.CloseKey(key)
                 except Exception:
                     pass
 
-        # 6. 常见安装目录扫描
+        # 5. macOS /usr/libexec/java_home -V
+        if is_mac:
+            try:
+                r = subprocess.run(["/usr/libexec/java_home", "-V"],
+                                   capture_output=True, text=True, timeout=10)
+                for line in r.stderr.splitlines():
+                    m = re.search(r'(/[^\s"]+\.jdk[^\s"]*)', line)
+                    if m:
+                        base = Path(m.group(1))
+                        for candidate in [
+                            base / "Contents" / "Home" / "bin" / exe_name,
+                            base / "bin" / exe_name,
+                        ]:
+                            _add(candidate, "macOS")
+            except Exception:
+                pass
+
+        # 6. 常见安装目录扫描（深度限制 4 层，避免全盘扫描）
         if is_win:
             search_roots = [
-                Path("C:/Program Files/Java"),
-                Path("C:/Program Files (x86)/Java"),
-                Path("C:/Program Files/Eclipse Adoptium"),
-                Path("C:/Program Files/Eclipse Temurin"),
-                Path("C:/Program Files/AdoptOpenJDK"),
-                Path("C:/Program Files/Microsoft"),
-                Path("C:/Program Files/Zulu"),
-                Path("C:/Program Files/GraalVM"),
-                Path("C:/Program Files/Amazon Corretto"),
-                Path("C:/Program Files/Semeru"),
-                Path("C:/Program Files/Common Files/Oracle/Java"),
+                Path(os.environ.get("ProgramFiles", "C:/Program Files")),
+                Path(os.environ.get("ProgramFiles(x86)", "C:/Program Files (x86)")),
+                Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData/Local")),
+            ]
+            vendor_dirs = [
+                "Java", "Eclipse Adoptium", "Eclipse Temurin", "AdoptOpenJDK",
+                "Microsoft", "Zulu", "GraalVM", "Amazon Corretto", "Semeru",
+                "BellSoft", "SapMachine", "Oracle",
             ]
             for root in search_roots:
-                if root.exists():
-                    for exe in root.rglob(exe_name):
-                        path = str(exe)
-                        if path not in found:
-                            ver, _ = LauncherBackend._parse_java_version(path)
-                            rel = Path(path).relative_to(root)
-                            found[path] = (ver, f"Java {ver} ({rel.parts[0]}) | {path}" if ver else f"Java ({rel.parts[0]}) | {path}")
+                for vendor in vendor_dirs:
+                    vendor_path = root / vendor
+                    if not vendor_path.exists():
+                        continue
+                    # 只扫描 vendor/*/bin/java*.exe，不递归全部
+                    for jdk_dir in vendor_path.iterdir():
+                        if not jdk_dir.is_dir():
+                            continue
+                        for exe_candidate in [
+                            jdk_dir / "bin" / exe_name,
+                            jdk_dir / "bin" / "java.exe",
+                        ]:
+                            _add(exe_candidate, vendor)
+        else:
+            unix_roots = [
+                Path("/usr/lib/jvm"),
+                Path("/usr/local/lib/jvm"),
+                Path("/Library/Java/JavaVirtualMachines"),
+                Path.home() / ".sdkman/candidates/java",
+                Path.home() / ".jabba/jdk",
+            ]
+            for base in unix_roots:
+                if not base.exists():
+                    continue
+                for jdk_dir in base.iterdir():
+                    if not jdk_dir.is_dir():
+                        continue
+                    for candidate in [
+                        jdk_dir / "bin" / exe_name,
+                        jdk_dir / "Contents" / "Home" / "bin" / exe_name,
+                    ]:
+                        _add(candidate, "System")
 
-        if not is_win:
-            for base in [Path("/usr/lib/jvm"), Path("/Library/Java/JavaVirtualMachines"),
-                         Path.home() / ".sdkman/candidates/java"]:
-                if base.exists():
-                    for exe in base.rglob(exe_name):
-                        path = str(exe)
-                        if path not in found:
-                            ver, _ = LauncherBackend._parse_java_version(path)
-                            found[path] = (ver, f"Java {ver} | {path}" if ver else f"Java | {path}")
-
+        # 7. 组装结果，按版本降序
         result = []
-        for path, (ver, label) in found.items():
+        for key, (path, ver, source) in found.items():
+            if ver:
+                label = f"Java {ver} ({source}) | {path}"
+            else:
+                label = f"Java (unknown, {source}) | {path}"
             result.append({"path": path, "version": ver, "label": label})
         result.sort(key=lambda x: x["version"], reverse=True)
         return result
