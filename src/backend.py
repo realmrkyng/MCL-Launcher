@@ -6,18 +6,114 @@ import os
 import re
 import json
 import uuid
+import shutil
+import zipfile
+import tempfile
 import platform
 import subprocess
 from pathlib import Path
+from urllib.parse import urlparse, urlunparse
 
+import requests as _requests
 import minecraft_launcher_lib as mll
 
-from .constants import APP_NAME, APP_VERSION, MINECRAFT_DIR
+from .constants import (
+    APP_NAME, APP_VERSION, MINECRAFT_DIR, CONFIG_FILE,
+    MIRROR_BASE_URL, URL_REWRITE_RULES, JVM_MANIFEST_URL_OFFICIAL,
+)
 
 try:
     import winreg
 except ImportError:
     winreg = None
+
+# 原始引用保存（用于 monkey-patch 恢复）
+_original_download_file = None
+_original_jvm_manifest_url = None
+
+
+def _rewrite_url(url):
+    """将 Mojang 官方 URL 重写为 BMCLAPI 镜像 URL"""
+    if not url:
+        return url
+    try:
+        parsed = urlparse(url)
+        host = parsed.netloc
+        if host in URL_REWRITE_RULES:
+            new_host = URL_REWRITE_RULES[host]
+            # libraries.minecraft.net → bmclapi2.bangbang93.com/libraries
+            # 此时路径需要合并
+            new_parsed = urlparse(f"https://{new_host}")
+            path = new_parsed.path.rstrip("/") + "/" + parsed.path.lstrip("/")
+            return urlunparse((
+                "https",
+                new_parsed.netloc,
+                path.rstrip("/"),
+                parsed.params,
+                parsed.query,
+                parsed.fragment,
+            ))
+    except Exception:
+        pass
+    return url
+
+
+def apply_mirror_patch():
+    """激活镜像下载：monkey-patch minecraft-launcher-lib 的下载函数和 JVM 清单 URL"""
+    global _original_download_file, _original_jvm_manifest_url
+
+    # 保存原始引用（仅首次）
+    if _original_download_file is None:
+        _original_download_file = mll._helper.download_file
+    if _original_jvm_manifest_url is None:
+        _original_jvm_manifest_url = mll.runtime._JVM_MANIFEST_URL
+
+    # 包装 download_file，在下载前重写 URL
+    def _patched_download_file(url, path, callback=None, sha1=None,
+                               lzma_compressed=False, session=None,
+                               minecraft_directory=None):
+        return _original_download_file(
+            _rewrite_url(url), path,
+            callback=callback or {},
+            sha1=sha1,
+            lzma_compressed=lzma_compressed,
+            session=session,
+            minecraft_directory=minecraft_directory,
+        )
+
+    mll._helper.download_file = _patched_download_file
+    mll.install.download_file = _patched_download_file
+    mll.runtime.download_file = _patched_download_file
+
+    # 重写 JVM 清单 URL
+    mll.runtime._JVM_MANIFEST_URL = _rewrite_url(JVM_MANIFEST_URL_OFFICIAL)
+
+    # 包装 get_requests_response_cache 以重写版本清单 URL
+    _original_cache = mll._helper.get_requests_response_cache
+
+    def _patched_cache(url):
+        return _original_cache(_rewrite_url(url))
+
+    mll._helper.get_requests_response_cache = _patched_cache
+
+    # 同时包装 runtime 模块中的 requests.get 调用（JVM 子清单请求）
+    _original_requests_get = mll.runtime.requests.get
+
+    def _patched_requests_get(url, **kwargs):
+        return _original_requests_get(_rewrite_url(url), **kwargs)
+
+    mll.runtime.requests.get = _patched_requests_get
+
+
+def restore_mirror_patch():
+    """恢复为官方源"""
+    global _original_download_file, _original_jvm_manifest_url
+    if _original_download_file is not None:
+        mll._helper.download_file = _original_download_file
+        mll.install.download_file = _original_download_file
+        mll.runtime.download_file = _original_download_file
+    if _original_jvm_manifest_url is not None:
+        mll.runtime._JVM_MANIFEST_URL = _original_jvm_manifest_url
 
 
 class LauncherBackend:
@@ -25,9 +121,27 @@ class LauncherBackend:
 
     def __init__(self):
         self.minecraft_dir = str(MINECRAFT_DIR)
+        self._mirror_active = False
 
     def set_minecraft_dir(self, path):
         self.minecraft_dir = str(path)
+
+    # ---- 镜像管理 ----
+    def set_download_source(self, source):
+        """设置下载源: 'official' 或 'bmclapi'"""
+        if source == "bmclapi":
+            if not self._mirror_active:
+                apply_mirror_patch()
+                self._mirror_active = True
+        else:
+            if self._mirror_active:
+                restore_mirror_patch()
+                self._mirror_active = False
+
+    @staticmethod
+    def get_jvm_manifest_url():
+        """返回当前 JVM 清单 URL（受镜像设置影响）"""
+        return mll.runtime._JVM_MANIFEST_URL
 
     # ---- 版本列表 ----
     def get_versions(self):
@@ -78,24 +192,146 @@ class LauncherBackend:
                 return str(candidate)
         return None
 
+    # ---- Java 下载 (Temurin JDK) ----
+    ADOPTIUM_API = "https://api.adoptium.net/v3/assets/latest/{major}/hotspot"
+    # 备用镜像列表：清华 TUNA（主）、华为云
+    FALLBACK_MIRRORS = [
+        "https://mirrors.tuna.tsinghua.edu.cn/Adoptium/{major}/jdk/{arch}/{os}/hotspot/eclipse/{filename}",
+    ]
+
     def auto_install_java(self, mc_version, callback=None):
-        """根据 MC 版本自动下载对应 JRE，返回安装后的 java 路径，失败返回 None"""
+        """下载适配 MC 版本的 Temurin JDK，返回 (java_path, None) 或 (None, error)"""
         min_ver = self.get_min_java_for_mc(mc_version)
-        # mll runtime 名称 → 对应 Java 主版本
-        runtime_map = [
-            ("java-runtime-delta",   21),
-            ("java-runtime-gamma",   17),
-            ("java-runtime-beta",    16),
-            ("java-runtime-alpha",   16),
-            ("jre-legacy",            8),
-        ]
-        runtime = next((r for r, v in runtime_map if v >= min_ver), "java-runtime-gamma")
+        return self._download_temurin_jdk(min_ver, callback)
+
+    def _download_temurin_jdk(self, major_version, callback=None):
+        """从 Adoptium 官方源（优先）或镜像站下载 Temurin JDK"""
+        if callback is None:
+            callback = {}
+        cb_status = callback.get("setStatus", lambda s: None)
+        cb_progress = callback.get("setProgress", lambda p: None)
+        cb_max = callback.get("setMax", lambda m: None)
+
+        cb_status(f"查询 Java {major_version} 最新版本...")
+
+        sysname = platform.system()
+        if sysname == "Windows":
+            os_key = "windows"
+        elif sysname == "Darwin":
+            os_key = "mac"
+        else:
+            os_key = "linux"
+        arch = "x64" if platform.architecture()[0] == "64bit" else "x32"
+
+        # 步骤1: 查询 Adoptium API
+        pkg_name = None
+        official_url = None
         try:
-            mll.runtime.install_jvm_runtime(runtime, self.minecraft_dir, callback=callback)
-        except Exception as e:
-            return None, str(e)
-        path = self.get_installed_jre_path(runtime)
-        return path, None
+            resp = _requests.get(
+                self.ADOPTIUM_API.format(major=major_version),
+                params={"architecture": arch, "image_type": "jdk", "os": os_key},
+                headers={"User-Agent": "MCL-Launcher/2.0"},
+                timeout=15,
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                binary = (data or [{}])[0].get("binary", {})
+                if binary:
+                    pkg = binary.get("package", {})
+                    pkg_name = pkg.get("name", "")
+                    official_url = pkg.get("link", "")
+        except Exception:
+            pass
+
+        if not official_url and not pkg_name:
+            return None, f"无法查询 Java {major_version} 下载信息（网络异常）"
+
+        # 步骤2: 构建下载 URL 列表
+        urls = []
+        if official_url:
+            urls.append(("Adoptium 官方", official_url))
+        if pkg_name:
+            for mirror_tpl in self.FALLBACK_MIRRORS:
+                mirror_url = mirror_tpl.format(
+                    major=major_version, arch=arch, os=os_key, filename=pkg_name
+                )
+                urls.append(("镜像站", mirror_url))
+
+        # 步骤3: 下载 + 解压
+        runtime_dir = Path(self.minecraft_dir) / "runtime" / f"jdk-{major_version}"
+        runtime_dir.mkdir(parents=True, exist_ok=True)
+
+        last_error = ""
+        for src_name, url in urls:
+            try:
+                cb_status(f"从 {src_name} 下载 Java {major_version}...")
+                zip_path = runtime_dir / f"jdk-{major_version}.zip"
+                self._download_file_with_progress(url, str(zip_path), cb_status, cb_progress, cb_max)
+
+                cb_status(f"解压 Java {major_version}...")
+                cb_max(0)
+                cb_progress(0)
+                extract_dir = runtime_dir / "extracted"
+                if extract_dir.exists():
+                    shutil.rmtree(extract_dir)
+                extract_dir.mkdir(parents=True, exist_ok=True)
+                with zipfile.ZipFile(str(zip_path), "r") as zf:
+                    zf.extractall(str(extract_dir))
+                zip_path.unlink(missing_ok=True)
+
+                java_exe = self._find_java_in_dir(extract_dir)
+                if java_exe:
+                    return java_exe, None
+                last_error = f"{src_name}: 解压后未找到 Java 可执行文件"
+                continue
+            except Exception as e:
+                last_error = f"{src_name}: {e}"
+                continue
+
+        return None, last_error or "所有下载源均失败"
+
+    @staticmethod
+    def _download_file_with_progress(url, dest, cb_status, cb_progress, cb_max):
+        """流式下载文件，支持进度回调，处理 SSL 证书问题"""
+        # 先用系统证书，失败则不验证
+        for verify in (True, False):
+            try:
+                resp = _requests.get(url, stream=True, timeout=60, verify=verify,
+                                    headers={"User-Agent": "MCL-Launcher/2.0"})
+                if resp.status_code != 200:
+                    if verify:
+                        continue
+                    raise Exception(f"HTTP {resp.status_code}")
+                total = int(resp.headers.get("content-length", 0))
+                cb_max(total if total > 0 else 200 * 1024 * 1024)
+                downloaded = 0
+                with open(dest, "wb") as f:
+                    for chunk in resp.iter_content(chunk_size=65536):
+                        if chunk:
+                            f.write(chunk)
+                            downloaded += len(chunk)
+                            if total > 0:
+                                cb_progress(downloaded)
+                            else:
+                                cb_progress(min(downloaded, 200 * 1024 * 1024))
+                return
+            except Exception:
+                if not verify:
+                    raise
+                continue
+
+    @staticmethod
+    def _find_java_in_dir(base_dir):
+        """在解压目录中递归查找 javaw.exe 或 java"""
+        exe_name = "javaw.exe" if platform.system() == "Windows" else "java"
+        for root, dirs, files in os.walk(str(base_dir)):
+            if exe_name in files:
+                return os.path.join(root, exe_name)
+            if "java" in files and platform.system() != "Windows":
+                java_path = os.path.join(root, "java")
+                if os.access(java_path, os.X_OK):
+                    return java_path
+        return None
 
     # ---- Java 版本解析 ----
     @staticmethod
@@ -103,7 +339,7 @@ class LauncherBackend:
         try:
             result = subprocess.run(
                 [java_path, "-version"],
-                capture_output=True, text=True, timeout=10
+                capture_output=True, text=True, timeout=5
             )
             output = (result.stderr or "") + (result.stdout or "")
             for line in output.splitlines():
@@ -123,10 +359,53 @@ class LauncherBackend:
         try:
             m = re.search(r'(\d+)', str(name))
             if m:
-                return int(m.group(1))
+                v = int(m.group(1))
+                # 兼容 "jdk-8u202" / "1.8.0_202" 这类命名
+                if v == 1:
+                    m2 = re.search(r'1\.(\d+)', str(name))
+                    if m2:
+                        return int(m2.group(1))
+                return v
         except Exception:
             pass
         return 0
+
+    @staticmethod
+    def _is_valid_java(java_path):
+        """快速验证 Java 是否可执行且版本可解析"""
+        ver, _ = LauncherBackend._parse_java_version(java_path)
+        return ver > 0
+
+    # ---- Java 路径持久化 ----
+    @staticmethod
+    def load_java_preferences():
+        """从配置加载已保存的 Java 路径映射 {mc_version: java_path}"""
+        try:
+            if CONFIG_FILE.is_file():
+                with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+                    return json.load(f).get("java_paths", {})
+        except Exception:
+            pass
+        return {}
+
+    @staticmethod
+    def save_java_preference(mc_version, java_path):
+        """保存某 MC 版本对应的 Java 路径"""
+        try:
+            config = {}
+            if CONFIG_FILE.is_file():
+                with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+                    try:
+                        config = json.load(f)
+                    except Exception:
+                        config = {}
+            java_paths = config.get("java_paths", {})
+            java_paths[mc_version] = java_path
+            config["java_paths"] = java_paths
+            with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+                json.dump(config, f, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
 
     # ---- Java 全面扫描 ----
     @staticmethod
@@ -193,6 +472,9 @@ class LauncherBackend:
                 (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Azul Systems\Zulu"),
                 (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Amazon Corretto\JDK"),
                 (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\BellSoft\Liberica JDK"),
+                (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Dragonwell\JDK"),
+                (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Alibaba Dragonwell\JDK"),
+                (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Huawei\bisheng"),
                 (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\WOW6432Node\JavaSoft\Java Runtime Environment"),
                 (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\WOW6432Node\JavaSoft\Java Development Kit"),
                 (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\WOW6432Node\JavaSoft\JDK"),
@@ -258,7 +540,8 @@ class LauncherBackend:
             vendor_dirs = [
                 "Java", "Eclipse Adoptium", "Eclipse Temurin", "AdoptOpenJDK",
                 "Microsoft", "Zulu", "GraalVM", "Amazon Corretto", "Semeru",
-                "BellSoft", "SapMachine", "Oracle",
+                "BellSoft", "SapMachine", "Oracle", "Dragonwell", "Alibaba",
+                "bisheng",
             ]
             for root in search_roots:
                 for vendor in vendor_dirs:
@@ -294,13 +577,12 @@ class LauncherBackend:
                     ]:
                         _add(candidate, "System")
 
-        # 7. 组装结果，按版本降序
+        # 7. 组装结果，过滤无效 Java 并按版本降序
         result = []
         for key, (path, ver, source) in found.items():
-            if ver:
-                label = f"Java {ver} ({source}) | {path}"
-            else:
-                label = f"Java (unknown, {source}) | {path}"
+            if ver <= 0:
+                continue
+            label = f"Java {ver} ({source}) | {path}"
             result.append({"path": path, "version": ver, "label": label})
         result.sort(key=lambda x: x["version"], reverse=True)
         return result

@@ -82,6 +82,23 @@ T = {
         "ram_auto_label": "自动 ({:.1f} GB / 共 {:.1f} GB)",
         "ram_manual_hint": "手动输入内存大小 (GB)",
         "banner_text": "🎮  支持正版 Minecraft  |  有条件请购买正版，体验完整功能  → 点击访问官网",
+        # 下载源
+        "download_source": "下载源",
+        "download_source_desc": "选择 Minecraft 和 Java 的下载来源",
+        "source_official": "官方源 (Mojang)",
+        "source_bmclapi": "BMCLAPI 镜像 (国内加速)",
+        "source_switch_warning": "切换下载源后，正在进行的下载不受影响。建议切换后重新下载。",
+        # Java 多版本 / 下载引导
+        "java_guide_title": "Java 下载指引",
+        "java_guide_official": "----------- 官方 Java 下载 -----------",
+        "java_guide_mirror": "----------- 国内镜像 (推荐) -----------",
+        "java_download_confirm": "未检测到 Java 运行环境。\n\n是否通过 {source} 自动下载适合 Minecraft {version} 的 Java？\n\n（约 100-200 MB）\n\n如自动下载失败，可点击「否」查看手动下载指引。",
+        "java_downloading": "正在下载 Java 运行时...",
+        "java_download_done": "Java 下载完成，正在重新扫描...",
+        "java_download_failed": "Java 下载失败",
+        "java_found": "扫描到 {} 个 Java",
+        "java_saved_path": "已保存 Java 选择: {}",
+        "status_scanning_java": "正在扫描 Java...",
     },
     "en": {
         "launch": "Launch",
@@ -162,5 +179,22 @@ T = {
         "ram_auto_label": "Auto ({:.1f} GB / total {:.1f} GB)",
         "ram_manual_hint": "Enter memory size manually (GB)",
         "banner_text": "🎮  Support Minecraft  |  Please buy the game to enjoy full features  → Click to visit store",
+        # Download source
+        "download_source": "Download Source",
+        "download_source_desc": "Choose where to download Minecraft and Java",
+        "source_official": "Official (Mojang)",
+        "source_bmclapi": "BMCLAPI Mirror (Asia)",
+        "source_switch_warning": "Switching download source won't affect ongoing downloads.",
+        # Java guide
+        "java_guide_title": "Java Download Guide",
+        "java_guide_official": "----------- Official Java Downloads -----------",
+        "java_guide_mirror": "----------- Mirror Downloads -----------",
+        "java_download_confirm": "No Java found.\n\nDownload Java for Minecraft {version} via {source}?\n\n(about 100-200 MB)\n\nIf auto-download fails, click 'No' for manual download guide.",
+        "java_downloading": "Downloading Java runtime...",
+        "java_download_done": "Java download complete, re-scanning...",
+        "java_download_failed": "Java download failed",
+        "java_found": "Found {} Java installations",
+        "java_saved_path": "Saved Java selection: {}",
+        "status_scanning_java": "Scanning Java...",
     }
 }
