@@ -12,7 +12,11 @@ import subprocess
 import customtkinter as ctk
 from tkinter import messagebox
 
-from ..constants import APP_NAME, APP_VERSION, DEFAULT_RAM, GITHUB_URL, MINECRAFT_DIR, CONFIG_FILE
+from ..constants import (
+    APP_NAME, APP_VERSION, DEFAULT_RAM, GITHUB_URL, MINECRAFT_DIR, CONFIG_FILE,
+    MIRROR_BASE_URL, get_default_download_source,
+    JAVA_DOWNLOAD_GUIDE_URLS_CN, JAVA_DOWNLOAD_GUIDE_URLS_INTL,
+)
 from ..i18n import T
 from ..backend import LauncherBackend
 from ..update_checker import UpdateChecker
@@ -46,6 +50,9 @@ class LauncherGUI:
 
         # 版本隔离
         self.version_isolation = self.config.get("version_isolation", True)
+
+        # 下载源
+        self.download_source = self.config.get("download_source", get_default_download_source())
 
         # 自动内存
         self.auto_ram = self.config.get("auto_ram", True)
@@ -141,7 +148,15 @@ class LauncherGUI:
             font=ctk.CTkFont(size=11), text_color=("gray50", TEXT_MUTED), anchor="e")
         self.lbl_statusbar_ram.pack(side="right", padx=12)
 
+        self.lbl_statusbar_source = ctk.CTkLabel(
+            bar, text="",
+            font=ctk.CTkFont(size=11), text_color=("gray50", TEXT_MUTED), anchor="center")
+        self.lbl_statusbar_source.pack(side="right", padx=12)
+
     def _update_statusbar(self):
+        source_label = "🌐 BMCLAPI" if self.download_source == "bmclapi" else "🌐 官方源"
+        self.root.after(0, lambda: self.lbl_statusbar_source.configure(text=source_label))
+
         if self.java_list:
             best = self.java_list[0]
             ver = best["version"]
@@ -281,6 +296,8 @@ class LauncherGUI:
             self.lbl_set_title.configure(text=self._("settings"))
             self.lbl_theme_text.configure(text=self._("theme"))
             self.lbl_lang_text.configure(text=self._("language"))
+            self.lbl_dl_src_text.configure(text=self._("download_source"))
+            self.lbl_dl_src_desc.configure(text=self._("download_source_desc"))
             self.lbl_isolation_text.configure(text=self._("version_isolation"))
             self.lbl_isolation_desc.configure(text=self._("version_isolation_desc"))
             self.lbl_auto_ram_text.configure(text=self._("auto_ram"))
@@ -334,6 +351,16 @@ class LauncherGUI:
             self._refresh_page_texts(p)
         self._refresh_settings_states()
 
+    def _on_dl_source_changed(self, choice):
+        source = "bmclapi" if choice == self._("source_bmclapi") else "official"
+        self.download_source = source
+        self.config["download_source"] = source
+        self._save_config()
+        self.backend.set_download_source(source)
+        self._log(f"下载源已切换为: {choice}")
+        self._update_statusbar()
+        messagebox.showinfo(self._("settings"), self._("source_switch_warning"))
+
     def _on_isolation_toggle(self):
         self.version_isolation = not self.version_isolation
         self.config["version_isolation"] = self.version_isolation
@@ -355,6 +382,8 @@ class LauncherGUI:
         self.combo_theme.set(self._("theme_dark") if self.config.get("theme", "dark") == "dark" else self._("theme_light"))
         self.combo_lang.configure(values=[self._("lang_cn"), self._("lang_en")])
         self.combo_lang.set(self._("lang_cn") if self.lang == "cn" else self._("lang_en"))
+        self.combo_dl_source.configure(values=[self._("source_official"), self._("source_bmclapi")])
+        self.combo_dl_source.set(self._("source_bmclapi") if self.download_source == "bmclapi" else self._("source_official"))
 
     def _update_ram_values(self):
         vals = ["1 GB", "2 GB", "4 GB", "6 GB", "8 GB", "12 GB", "16 GB"]
@@ -441,6 +470,9 @@ class LauncherGUI:
 
     # ==================== 后台初始化 ====================
     def _init_backend(self):
+        # 应用下载源设置
+        self.backend.set_download_source(self.download_source)
+
         def load_versions():
             try:
                 self.version_data = self.backend.get_versions()
@@ -540,7 +572,7 @@ class LauncherGUI:
             self.java_list = LauncherBackend.find_all_java()
             if self.java_list:
                 labels = [j["label"] for j in self.java_list]
-                self._log(f"扫描到 {len(self.java_list)} 个 Java:")
+                self._log(self._("java_found", len(self.java_list)))
                 for j in self.java_list:
                     self._log(f"  {j['label']}")
                 self.root.after(0, lambda: self.combo_java.configure(values=labels))
@@ -570,20 +602,31 @@ class LauncherGUI:
 
     def _on_java_hint_click(self):
         if not self.java_list:
-            self._prompt_auto_download_java()
+            self._auto_download_java_for_current_version()
 
-    def _prompt_auto_download_java(self):
+    def _auto_download_java_for_current_version(self):
+        """静默从清华镜像下载 Java，不弹窗"""
         version = self.combo_version.get()
         if not version or version in (self._("loading"), self._("fetch_failed")):
             version = "1.21"
-        if messagebox.askyesno(
-            self._("java_download_title"),
-            f"未检测到 Java，是否自动下载适合 Minecraft {version} 的 Java 运行时？\n\n"
-            "（将通过 Mojang 官方源下载，约 100-200 MB）"
-        ):
-            self._auto_download_java(version)
+        self._auto_download_java(version)
+
+    def _prompt_auto_download_java(self):
+        """保留兼容，直接触发静默下载"""
+        self._auto_download_java_for_current_version()
+
+    def _show_java_guide(self):
+        """显示 Java 下载指引对话框，根据语言显示国内或国际链接"""
+        is_cn = self.lang == "cn"
+        links = JAVA_DOWNLOAD_GUIDE_URLS_CN if is_cn else JAVA_DOWNLOAD_GUIDE_URLS_INTL
+        title = self._("java_guide_title")
+        if is_cn:
+            msg = self._("java_guide_mirror") + "\n\n"
         else:
-            webbrowser.open("https://adoptium.net/download/")
+            msg = self._("java_guide_official") + "\n\n"
+        msg += "\n".join(f"  • {name}\n    {url}" for name, url in links)
+        msg += "\n\n安装后请点击「扫描」按钮重新检测。"
+        messagebox.showinfo(title, msg)
 
     def _auto_download_java(self, mc_version):
         if self.is_busy:
@@ -593,8 +636,8 @@ class LauncherGUI:
         self.btn_scan_java.configure(state="disabled")
         self.progress.configure(mode="indeterminate")
         self.progress.start()
-        self._status("正在下载 Java 运行时...")
-        self._log(f"开始自动下载适合 MC {mc_version} 的 Java...")
+        self._status("从清华镜像下载 Java...")
+        self._log(f"从清华大学镜像站下载适配 MC {mc_version} 的 Java...")
 
         max_val = [100]
 
@@ -624,15 +667,27 @@ class LauncherGUI:
             self.root.after(0, lambda: self.btn_scan_java.configure(state="normal"))
             if path:
                 self._log(f"Java 下载完成: {path}")
-                self._status("Java 下载完成，正在重新扫描...")
+                self._status(self._("java_download_done"))
+                # 保存路径 → 下次启动不再弹出
+                LauncherBackend.save_java_preference(mc_version, path)
                 self._refresh_java_list()
+                self.root.after(500, lambda: self._try_launch_again())
             else:
                 self._log(f"Java 下载失败: {err}")
-                self._status("Java 下载失败")
-                self.root.after(0, lambda: messagebox.showerror(
-                    "下载失败",
-                    f"Java 自动下载失败：{err}\n\n请手动安装：https://adoptium.net/download/"
+                self._status(self._("java_download_failed"))
+                self.root.after(0, lambda: (
+                    messagebox.showerror(
+                        self._("java_download_failed"),
+                        f"Java 自动下载失败：{err}\n\n请检查网络连接后重试，或手动安装 Java。\n\n"
+                        "推荐下载地址：\n• https://mirrors.tuna.tsinghua.edu.cn/Adoptium/\n"
+                        "• https://adoptium.net/download/"
+                    )
                 ))
+
+    def _try_launch_again(self):
+        """Java 下载完成后，用新 Java 重新启动"""
+        self._log("Java 已就绪，重新启动...")
+        self._on_launch()
 
         threading.Thread(target=task, daemon=True).start()
 
@@ -650,12 +705,25 @@ class LauncherGUI:
     def _auto_pick_java(self, mc_version):
         if not self.java_list:
             return
+        # 优先使用已保存的 Java 路径
+        saved_paths = LauncherBackend.load_java_preferences()
+        saved = saved_paths.get(mc_version)
+        if saved and os.path.isfile(saved):
+            ver, _ = LauncherBackend._parse_java_version(saved)
+            if ver >= LauncherBackend.get_min_java_for_mc(mc_version):
+                for j in self.java_list:
+                    if os.path.normpath(j["path"]) == os.path.normpath(saved):
+                        self.combo_java.set(j["label"])
+                        self._update_java_hint(j["version"], mc_version)
+                        self._log(self._("java_saved_path", j["label"]))
+                        return
         best = LauncherBackend.pick_best_java(self.java_list, mc_version)
         if best:
             idx = self.java_list.index(best)
             self.combo_java.set(self.java_list[idx]["label"])
             self._update_java_hint(best["version"], mc_version)
             self._log(self._("java_auto_selected", best["label"]))
+            LauncherBackend.save_java_preference(mc_version, best["path"])
 
     def _update_java_hint(self, java_ver, mc_version=None):
         if mc_version is None:
@@ -683,6 +751,10 @@ class LauncherGUI:
         sel = self.combo_java.get()
         for j in self.java_list:
             if j["label"] == sel:
+                # 保存选择
+                version = self.combo_version.get()
+                if version and version not in (self._("loading"), self._("fetch_failed")):
+                    LauncherBackend.save_java_preference(version, j["path"])
                 return j["path"], j["version"]
         return None, 0
 
@@ -742,17 +814,19 @@ class LauncherGUI:
                 better = [j for j in self.java_list if j["version"] >= min_java]
                 if better:
                     better.sort(key=lambda x: x["version"])
-                    hint = "\n".join(f"  • {j['label']}" for j in better[:3])
-                    msg = (f"Minecraft {version} 需要 Java {min_java}+。\n"
-                           f"当前选中: Java {java_ver}\n\n系统中有兼容的 Java:\n{hint}\n\n"
-                           "请在 Java 环境下拉框中切换后重试。")
-                    self.root.after(0, lambda: self._on_launch_error(self._("java_incompatible"), msg))
+                    # 自动切换到兼容的 Java
+                    best_compat = better[0]
+                    for idx, j in enumerate(self.java_list):
+                        if j["path"] == best_compat["path"]:
+                            self.root.after(0, lambda i=idx: self.combo_java.set(self.java_list[i]["label"]))
+                            break
+                    self._log(f"自动切换到: {best_compat['label']}")
+                    java_path, java_ver = best_compat["path"], best_compat["version"]
+                else:
+                    # 没有兼容版本 → 静默从清华镜像下载
+                    self._log(f"无兼容 Java，自动从清华镜像下载 Java {min_java}...")
+                    self.root.after(0, lambda: self._auto_download_java(version))
                     return
-                msg = (f"Minecraft {version} 需要 Java {min_java} 或更高版本。\n\n"
-                       f"当前版本: Java {java_ver}\n\n"
-                       "请手动安装更高版本的 Java:\n• https://adoptium.net/download/")
-                self.root.after(0, lambda: self._on_launch_error(self._("java_incompatible"), msg))
-                return
 
             try:
                 if self.auto_ram:
@@ -781,13 +855,12 @@ class LauncherGUI:
         threading.Thread(target=check_and_launch, daemon=True).start()
 
     def _on_no_java(self):
-        self.is_busy = False
-        self.btn_launch.configure(state="normal", text=self._("launch_game"))
-        self._status(self._("launch_failed"))
+        """没有 Java 时静默从清华镜像下载"""
+        self._status("正在下载 Java 运行时...")
         version = self.combo_version.get()
         if not version or version in (self._("loading"), self._("fetch_failed")):
             version = "1.21"
-        self._prompt_auto_download_java()
+        self._auto_download_java(version)
 
     def _on_launch_error(self, title, msg):
         self.is_busy = False
@@ -797,8 +870,9 @@ class LauncherGUI:
 
     # ==================== 下载 ====================
     def _start_download(self, username, version, ram_gb, java_path):
+        src_label = "BMCLAPI 镜像" if self.download_source == "bmclapi" else "官方源"
         self._status(f"准备下载 {version} ...")
-        self._log(f"版本 {version} 尚未安装，开始从官方源下载…")
+        self._log(f"版本 {version} 尚未安装，开始从{src_label}下载…")
 
         mc_dir = self._get_effective_minecraft_dir(version)
         self.backend.set_minecraft_dir(mc_dir)

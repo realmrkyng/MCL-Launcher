@@ -276,6 +276,21 @@ class PageBuilder:
         app.combo_lang.set(self.t("lang_cn") if app.lang == "cn" else self.t("lang_en"))
         app.combo_lang.pack(side="left", padx=(8, 0))
 
+        # --- 下载源 ---
+        src_row = ctk.CTkFrame(inner, fg_color="transparent")
+        src_row.pack(fill="x", pady=(12, 5))
+        app.lbl_dl_src_text = ctk.CTkLabel(src_row, text=self.t("download_source"), width=lw_s,
+                                           anchor="w", font=ctk.CTkFont(size=14))
+        app.lbl_dl_src_text.pack(side="left")
+        app.combo_dl_source = ctk.CTkComboBox(src_row, values=[self.t("source_official"), self.t("source_bmclapi")],
+                                              height=34, font=ctk.CTkFont(size=13), state="readonly",
+                                              command=app._on_dl_source_changed)
+        app.combo_dl_source.set(self.t("source_bmclapi") if app.download_source == "bmclapi" else self.t("source_official"))
+        app.combo_dl_source.pack(side="left", padx=(8, 10))
+        app.lbl_dl_src_desc = ctk.CTkLabel(src_row, text=self.t("download_source_desc"),
+                                           font=ctk.CTkFont(size=12), text_color="gray55")
+        app.lbl_dl_src_desc.pack(side="left")
+
         ctk.CTkFrame(inner, height=1, fg_color=("gray75", "gray30")).pack(fill="x", pady=12)
 
         # --- 版本隔离 ---
