@@ -30,7 +30,8 @@
 
 ## 📸 截图
 
-> 
+> [capture_20260513191434143.bmp](https://github.com/user-attachments/files/27707742/capture_20260513191434143.bmp)
+
 
 
 ## 🚀 快速开始
