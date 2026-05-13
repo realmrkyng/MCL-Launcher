@@ -1,72 +1,105 @@
-# MCL-Launcher  
-Minecraft 是一款值得购买的游戏，请支持正版。    
-Minecraft启动器(MCL Launcher)  
-本启动器仅供学习交流，游戏文件请通过官方启动器或正版账号获取。  
-一个简洁、开源的 **Minecraft 启动器**，支持离线下载、自动 Java 检测、版本隔离、内存自动分配、中英双语、黑白主题。
- 
-## ✨ 特色功能
+<p align="center">
+  <img src="icon.png" width="128" alt="MCL Launcher" />
+</p>
 
-| 功能 | 说明 |
-|------|------|
-| 🚀 **离线下载与启动** | 一键下载并启动 Minecraft |
-| ☕ **Java 自动检测** | 找不到 Java 时自动下载 |
-| 📦 **版本隔离** | 不同版本互不干扰（设置里可开关）|
-| 💾 **内存自动分配** | 根据你的电脑内存智能分配，不卡顿 |
-| 🎨 **黑白主题** | 纯白 / 纯黑，保护眼睛 |
-| 🔮 **联机预告** | 创建房间 / 加入房间（功能开发中）|
+<h1 align="center">MCL Launcher</h1>
+
+<p align="center">
+  <strong>一个简洁、开源的 Minecraft 启动器</strong>
+  <br>
+  支持离线下载、自动 Java 检测、版本隔离、中英双语
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/Python-3.8%2B-blue" alt="Python 3.8+" />
+  <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT License" />
+  <img src="https://img.shields.io/badge/platform-Windows-lightgrey" alt="Windows" />
+</p>
 
 ---
 
-## 📥 下载使用
+## ✨ 功能
 
-### 方式一：直接下载 exe（推荐）
-👉 [**下载 MCL Launcher v1.1**](https://github.com/realmrkyng/MCL-Launcher/releases/latest)
+| 功能 | 说明 |
+|------|------|
+| 🚀 **一键下载 & 启动** | 自动下载 Minecraft，无需手动操作 |
+| ☕ **Java 自动检测** | 找不到 Java 时自动下载安装包到桌面 |
+| 📦 **版本隔离** | 不同版本互不干扰（可开关） |
+| 💾 **内存自动分配** | 根据你的电脑内存智能分配 |
+| 🔧 **模组加载器** | 支持 Forge / Fabric / OptiFine 一键安装 |
+| 🎨 **黑白主题** | 纯白 / 纯黑，保护眼睛 |
+| 🌐 **中英双语** | 自动适配系统语言 |
+| 📥 **镜像下载** | 国内用户自动使用 BMCLAPI + TUNA 镜像加速 |
+| 🔮 **联机预告** | 联机功能正在开发中 |
 
-无需安装 Python，双击即可运行。
+## 📸 截图
 
-### 方式二：源码运行
+> *待补充*
+
+## 🚀 快速开始
+
+### 下载即用
+
+从 [Releases](https://github.com/realmrkyng/MCL-Launcher/releases/latest) 下载最新版 exe，双击运行即可。
+
+### 从源码运行
+
 ```bash
+# 1. 克隆仓库
 git clone https://github.com/realmrkyng/MCL-Launcher.git
 cd MCL-Launcher
-pip install -r requirements.txt
-python main.py
 
-# 结构
+# 2. 安装依赖
+pip install -r requirements.txt
+
+# 3. 运行
+python main.py
+```
+
+### 打包为 exe
+
+```bash
+build.bat
+```
+
+输出在 `dist/MCL-Launcher.exe`。
+
+## 🏗️ 项目结构
+
+```
 MCL-Launcher/
-│
-├── main.py                      # 入口：from src.ui.app import LauncherGUI
-├── requirements.txt             # minecraft-launcher-lib>=6.5, customtkinter>=5.2.0
-├── build.bat                    # PyInstaller 打包脚本
-├── .gitignore
-├── README.md
-├── LICENSE
+├── main.py               # 入口
+├── build.bat             # 打包脚本
+├── requirements.txt      # 依赖
 │
 └── src/
-    │
-    ├── __init__.py              # 包声明
-    │
-    ├── constants.py             # APP_NAME / v1.1 / AUTHOR / GitHub URL / 路径配置
-    │
-    ├── i18n.py                  # 中英文翻译字典（~70 keys，T["cn"] / T["en"]）
-    │
-    ├── backend.py               # LauncherBackend：版本列表 / 下载 / 安装 / Java检测 / 启动命令
-    │
-    ├── update_checker.py        # UpdateChecker：GitHub 异步检查更新
-    │
-    └── ui/
-        │
-        ├── __init__.py
-        │
-        ├── app.py               # LauncherGUI 主类：窗口 / 页面切换 / 启动流程 / 配置 / 主题 / 动画
-        │
-        ├── pages.py             # PageBuilder：5页 UI 构建器（启动 / 下载 / 联机 / 设置 / 关于）
-        │
-        └── widgets.py           # 侧边栏 / 横幅 / 悬浮动画 / 点击反馈
+    ├── constants.py      # 配置 & 常量
+    ├── backend.py        # 后端核心逻辑
+    ├── mod_loader.py     # 模组加载器管理
+    ├── modrinth.py       # Modrinth API
+    ├── i18n.py           # 国际化
+    └── ui/               # 用户界面
+        ├── app.py        # 主窗口
+        ├── pages.py      # 页面布局
+        └── widgets.py    # UI 组件
+```
 
-# 技术栈
-· Python 3.x
-· PyInstaller（打包 exe）
-· tkinter / customtkinter（界面）
+> 完整结构见 [PROJECT_STRUCTURE.md](PROJECT_STRUCTURE.md)
 
-#📄 开源协议
-MIT License © 2026 MrKyng
+## 🛠️ 技术栈
+
+- **Python 3.x** — 核心语言
+- **customtkinter** — 现代化 UI 框架
+- **minecraft-launcher-lib** — Minecraft 启动库
+- **PyInstaller** — 打包为 exe
+- **Modrinth API / CurseForge API** — 模组搜索
+
+## 📄 开源协议
+
+MIT License © 2026 [MrKyng](https://github.com/realmrkyng)
+
+---
+
+<p align="center">
+  <i>Minecraft 是一款值得购买的游戏，请支持正版。</i>
+</p>

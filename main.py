@@ -1,13 +1,17 @@
 # -*- coding: utf-8 -*-
 """
-MCL Launcher — 入口
-    python -m src.main
-如果使用单文件打包，可直接 python src/main.py
+MCL Launcher v1.2 — 入口
 """
+from src.ui.boot import BootSplash
 from src.ui.app import LauncherGUI
 
 
 def main():
+    # 开机动画
+    splash = BootSplash(app_name="MCL Launcher")
+    splash.run()
+
+    # 主窗口
     gui = LauncherGUI()
     gui.root.mainloop()
 
