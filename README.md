@@ -1,7 +1,3 @@
-<p align="center">
-  <img src="icon.png" width="128" alt="MCL Launcher" />
-</p>
-
 <h1 align="center">MCL Launcher</h1>
 
 <p align="center">
@@ -29,12 +25,13 @@
 | 🔧 **模组加载器** | 支持 Forge / Fabric / OptiFine 一键安装 |
 | 🎨 **黑白主题** | 纯白 / 纯黑，保护眼睛 |
 | 🌐 **中英双语** | 自动适配系统语言 |
-| 📥 **镜像下载** | 国内用户自动使用 BMCLAPI + TUNA 镜像加速 |
+| 📥 **镜像下载** | BMCLAPI + TUNA 镜像加速 |
 | 🔮 **联机预告** | 联机功能正在开发中 |
 
 ## 📸 截图
 
-> *待补充*
+> 
+
 
 ## 🚀 快速开始
 
@@ -77,7 +74,7 @@ MCL-Launcher/
     ├── backend.py        # 后端核心逻辑
     ├── mod_loader.py     # 模组加载器管理
     ├── modrinth.py       # Modrinth API
-    ├── i18n.py           # 国际化
+    ├── i18n.py           # 双语
     └── ui/               # 用户界面
         ├── app.py        # 主窗口
         ├── pages.py      # 页面布局
