@@ -14,12 +14,16 @@ import subprocess
 from pathlib import Path
 from urllib.parse import urlparse, urlunparse
 
+import sys as _sys
 import requests as _requests
 import minecraft_launcher_lib as mll
 
+# 抑制 Windows 上 subprocess 调用的控制台窗口闪烁
+_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
 from .constants import (
     APP_NAME, APP_VERSION, MINECRAFT_DIR, CONFIG_FILE,
-    MIRROR_BASE_URL, URL_REWRITE_RULES, JVM_MANIFEST_URL_OFFICIAL,
+    URL_REWRITE_RULES, JVM_MANIFEST_URL_OFFICIAL,
 )
 
 try:
@@ -30,6 +34,8 @@ except ImportError:
 # 原始引用保存（用于 monkey-patch 恢复）
 _original_download_file = None
 _original_jvm_manifest_url = None
+_original_get_requests_response_cache = None
+_original_runtime_requests_get = None
 
 
 def _rewrite_url(url):
@@ -61,12 +67,17 @@ def _rewrite_url(url):
 def apply_mirror_patch():
     """激活镜像下载：monkey-patch minecraft-launcher-lib 的下载函数和 JVM 清单 URL"""
     global _original_download_file, _original_jvm_manifest_url
+    global _original_get_requests_response_cache, _original_runtime_requests_get
 
     # 保存原始引用（仅首次）
     if _original_download_file is None:
         _original_download_file = mll._helper.download_file
     if _original_jvm_manifest_url is None:
         _original_jvm_manifest_url = mll.runtime._JVM_MANIFEST_URL
+    if _original_get_requests_response_cache is None:
+        _original_get_requests_response_cache = mll._helper.get_requests_response_cache
+    if _original_runtime_requests_get is None:
+        _original_runtime_requests_get = mll.runtime.requests.get
 
     # 包装 download_file，在下载前重写 URL
     def _patched_download_file(url, path, callback=None, sha1=None,
@@ -89,18 +100,14 @@ def apply_mirror_patch():
     mll.runtime._JVM_MANIFEST_URL = _rewrite_url(JVM_MANIFEST_URL_OFFICIAL)
 
     # 包装 get_requests_response_cache 以重写版本清单 URL
-    _original_cache = mll._helper.get_requests_response_cache
-
     def _patched_cache(url):
-        return _original_cache(_rewrite_url(url))
+        return _original_get_requests_response_cache(_rewrite_url(url))
 
     mll._helper.get_requests_response_cache = _patched_cache
 
     # 同时包装 runtime 模块中的 requests.get 调用（JVM 子清单请求）
-    _original_requests_get = mll.runtime.requests.get
-
     def _patched_requests_get(url, **kwargs):
-        return _original_requests_get(_rewrite_url(url), **kwargs)
+        return _original_runtime_requests_get(_rewrite_url(url), **kwargs)
 
     mll.runtime.requests.get = _patched_requests_get
 
@@ -108,12 +115,17 @@ def apply_mirror_patch():
 def restore_mirror_patch():
     """恢复为官方源"""
     global _original_download_file, _original_jvm_manifest_url
+    global _original_get_requests_response_cache, _original_runtime_requests_get
     if _original_download_file is not None:
         mll._helper.download_file = _original_download_file
         mll.install.download_file = _original_download_file
         mll.runtime.download_file = _original_download_file
     if _original_jvm_manifest_url is not None:
         mll.runtime._JVM_MANIFEST_URL = _original_jvm_manifest_url
+    if _original_get_requests_response_cache is not None:
+        mll._helper.get_requests_response_cache = _original_get_requests_response_cache
+    if _original_runtime_requests_get is not None:
+        mll.runtime.requests.get = _original_runtime_requests_get
 
 
 class LauncherBackend:
@@ -122,9 +134,13 @@ class LauncherBackend:
     def __init__(self):
         self.minecraft_dir = str(MINECRAFT_DIR)
         self._mirror_active = False
+        self._installed_ids_cache = None
 
     def set_minecraft_dir(self, path):
-        self.minecraft_dir = str(path)
+        path = str(path)
+        if path != self.minecraft_dir:
+            self._installed_ids_cache = None
+        self.minecraft_dir = path
 
     # ---- 镜像管理 ----
     def set_download_source(self, source):
@@ -149,13 +165,18 @@ class LauncherBackend:
         return releases
 
     def is_installed(self, version_id):
-        if version_id not in mll.utils.get_installed_versions(self.minecraft_dir):
+        if self._installed_ids_cache is None:
+            self._installed_ids_cache = frozenset(
+                mll.utils.get_installed_versions(self.minecraft_dir)
+            )
+        if version_id not in self._installed_ids_cache:
             return False
         jar = os.path.join(self.minecraft_dir, "versions", version_id, f"{version_id}.jar")
         return os.path.isfile(jar)
 
     def install(self, version_id, callback):
         mll.install.install_minecraft_version(version_id, self.minecraft_dir, callback=callback)
+        self._installed_ids_cache = None
 
     # ---- 启动命令 ----
     def get_launch_command(self, version_id, username, ram_gb, java_path):
@@ -192,11 +213,14 @@ class LauncherBackend:
                 return str(candidate)
         return None
 
-    # ---- Java 下载 (Temurin JDK) ----
+    # ---- Java 下载 (Temurin JDK / 多镜像高速下载) ----
     ADOPTIUM_API = "https://api.adoptium.net/v3/assets/latest/{major}/hotspot"
-    # 备用镜像列表：清华 TUNA（主）、华为云
-    FALLBACK_MIRRORS = [
-        "https://mirrors.tuna.tsinghua.edu.cn/Adoptium/{major}/jdk/{arch}/{os}/hotspot/eclipse/{filename}",
+
+    # 国内高速镜像站（多个备用，按优先级排列）
+    # {major} {minor} {arch} {os} {filename}
+    JAVA_MIRRORS = [
+        # 注意: TUNA 的实际路径不含 hotspot/eclipse 两层
+        ("清华 TUNA 镜像",     "https://mirrors.tuna.tsinghua.edu.cn/Adoptium/{major}/jdk/{arch}/{os}/{filename}"),
     ]
 
     def auto_install_java(self, mc_version, callback=None):
@@ -204,15 +228,161 @@ class LauncherBackend:
         min_ver = self.get_min_java_for_mc(mc_version)
         return self._download_temurin_jdk(min_ver, callback)
 
-    def _download_temurin_jdk(self, major_version, callback=None):
-        """从 Adoptium 官方源（优先）或镜像站下载 Temurin JDK"""
+    def download_java_zip(self, mc_version, callback=None):
+        """
+        下载 Java 安装包到桌面（Windows 下为 .msi 安装程序，直接双击即安装）。
+        返回 (installer_path, None) 或 (None, error)。
+        """
+        min_ver = self.get_min_java_for_mc(mc_version)
         if callback is None:
             callback = {}
         cb_status = callback.get("setStatus", lambda s: None)
         cb_progress = callback.get("setProgress", lambda p: None)
         cb_max = callback.get("setMax", lambda m: None)
 
-        cb_status(f"查询 Java {major_version} 最新版本...")
+        # 1. 获取 CPU 架构
+        sysname = platform.system()
+        if sysname == "Windows":
+            os_key = "windows"
+        elif sysname == "Darwin":
+            os_key = "mac"
+        else:
+            os_key = "linux"
+        machine = (platform.machine() or "").lower()
+        if machine in ("arm64", "aarch64"):
+            arch = "aarch64"
+        elif platform.architecture()[0] == "64bit":
+            arch = "x64"
+        else:
+            arch = "x32"
+
+        # Windows 下优先用 .msi 安装包（双击即安装），没有则退回到 .zip
+        is_windows = (sysname == "Windows")
+
+        cb_status(f"正在查询 Java {min_ver} 最新版本...")
+
+        # 2. 查询 Adoptium API 获取 .zip 包信息，然后转成 .msi 文件名
+        pkg_name = None
+        official_url = None
+        try:
+            resp = _requests.get(
+                self.ADOPTIUM_API.format(major=min_ver),
+                params={"architecture": arch, "image_type": "jdk", "os": os_key},
+                headers={"User-Agent": "MCL-Launcher/2.0"},
+                timeout=20,
+            )
+            if resp.status_code == 200:
+                pkg_name, official_url = self._pick_temurin_zip_from_adoptium_payload(resp.json())
+        except Exception:
+            pass
+
+        if not pkg_name and not official_url:
+            return None, f"无法查询 Java {min_ver} 下载信息（网络异常或本机架构 {arch} 无可用包）"
+
+        # 3. 构建下载 URL 列表
+        # Windows: 优先 .msi，如果镜像没有 .msi 则退回 .zip
+        # 非 Windows: 只用 .zip
+        urls = []
+        if pkg_name:
+            zip_filename = pkg_name
+            msi_filename = re.sub(r'\.zip$', '.msi', zip_filename) if is_windows else None
+            for src_label, tpl in self.JAVA_MIRRORS:
+                if is_windows and msi_filename:
+                    # Windows 先尝试 .msi
+                    msi_url = tpl.format(
+                        major=min_ver, arch=arch, os=os_key, filename=msi_filename
+                    )
+                    urls.append((f"{src_label} (.msi)", msi_url, msi_filename))
+                # 始终保留 .zip 作为兜底
+                zip_url = tpl.format(
+                    major=min_ver, arch=arch, os=os_key, filename=zip_filename
+                )
+                urls.append((f"{src_label} (.zip)", zip_url, zip_filename))
+        if official_url:
+            urls.append(("GitHub Releases", official_url, pkg_name or f"jdk-{min_ver}.zip"))
+
+        # 4. 下载到桌面 (Java_Downloads 文件夹)
+        download_dir = Path(self._get_desktop_path()) / "Java_Downloads"
+        download_dir.mkdir(parents=True, exist_ok=True)
+
+        last_error = ""
+        for src_name, url, local_name in urls:
+            try:
+                cb_status(f"正在从 {src_name} 下载 Java {min_ver}...")
+                installer_path = download_dir / local_name
+                self._download_file_with_progress(url, str(installer_path), cb_status, cb_progress, cb_max)
+
+                if installer_path.stat().st_size < 500_000:
+                    raise Exception("下载文件过小，可能为错误页或阻断页")
+
+                cb_status("下载完成！")
+                cb_max(0)
+                cb_progress(0)
+                return str(installer_path), None
+            except Exception as e:
+                last_error = f"{src_name}: {e}"
+                continue
+
+        return None, last_error or "所有下载源均已尝试失败"
+
+    @staticmethod
+    def _get_desktop_path():
+        """获取系统桌面路径（兼容中文/非英文系统）"""
+        try:
+            import ctypes
+            buf = ctypes.create_unicode_buffer(260)
+            # CSIDL_DESKTOP = 0x0000
+            ctypes.windll.shell32.SHGetFolderPathW(None, 0x0000, None, 0, buf)
+            path = buf.value
+            if path and Path(path).exists():
+                return str(path)
+        except Exception:
+            pass
+        # 备选: 常见桌面路径
+        for p in [Path.home() / "Desktop", Path.home() / "OneDrive" / "Desktop",
+                  Path(os.environ.get("USERPROFILE", "")) / "Desktop"]:
+            if p.exists():
+                return str(p)
+        # 最后兜底
+        return str(Path.home())
+
+    @staticmethod
+    def _adoptium_asset_entries(data):
+        """Adoptium API 可能返回 list 或包了一层 dict，统一成可遍历条目。"""
+        if isinstance(data, list):
+            return data
+        if isinstance(data, dict):
+            bins = data.get("binaries")
+            if isinstance(bins, list) and bins:
+                return bins
+            return [data]
+        return []
+
+    @staticmethod
+    def _pick_temurin_zip_from_adoptium_payload(data):
+        """从 API JSON 中取出 .zip 安装包文件名与直链（跳过 .msi 等）。"""
+        for item in LauncherBackend._adoptium_asset_entries(data):
+            if not isinstance(item, dict):
+                continue
+            binary = item.get("binary")
+            if not isinstance(binary, dict):
+                binary = item
+            pkg = binary.get("package") if isinstance(binary.get("package"), dict) else {}
+            name = (pkg.get("name") or "").strip()
+            link = (pkg.get("link") or "").strip()
+            if name.lower().endswith(".zip"):
+                return name, link
+        return None, None
+
+    def _download_temurin_jdk(self, major_version, callback=None):
+        """多镜像自动下载 Java — 从官方查版本号，再依次尝试镜像站下载"""
+        if callback is None:
+            callback = {}
+        cb_status = callback.get("setStatus", lambda s: None)
+        cb_progress = callback.get("setProgress", lambda p: None)
+        cb_max = callback.get("setMax", lambda m: None)
+
+        cb_status(f"正在查询 Java {major_version} 最新版本...")
 
         sysname = platform.system()
         if sysname == "Windows":
@@ -221,9 +391,15 @@ class LauncherBackend:
             os_key = "mac"
         else:
             os_key = "linux"
-        arch = "x64" if platform.architecture()[0] == "64bit" else "x32"
+        machine = (platform.machine() or "").lower()
+        if machine in ("arm64", "aarch64"):
+            arch = "aarch64"
+        elif platform.architecture()[0] == "64bit":
+            arch = "x64"
+        else:
+            arch = "x32"
 
-        # 步骤1: 查询 Adoptium API
+        # 步骤1: 查询 Adoptium API 获取最新文件名
         pkg_name = None
         official_url = None
         try:
@@ -231,44 +407,42 @@ class LauncherBackend:
                 self.ADOPTIUM_API.format(major=major_version),
                 params={"architecture": arch, "image_type": "jdk", "os": os_key},
                 headers={"User-Agent": "MCL-Launcher/2.0"},
-                timeout=15,
+                timeout=20,
             )
             if resp.status_code == 200:
-                data = resp.json()
-                binary = (data or [{}])[0].get("binary", {})
-                if binary:
-                    pkg = binary.get("package", {})
-                    pkg_name = pkg.get("name", "")
-                    official_url = pkg.get("link", "")
+                pkg_name, official_url = self._pick_temurin_zip_from_adoptium_payload(resp.json())
         except Exception:
             pass
 
-        if not official_url and not pkg_name:
-            return None, f"无法查询 Java {major_version} 下载信息（网络异常）"
+        if not pkg_name and not official_url:
+            return None, f"无法查询 Java {major_version} 下载信息（网络异常或本机架构 {arch} 无可用包）"
 
-        # 步骤2: 构建下载 URL 列表
+        # 步骤2: 构建多级下载 URL 列表（镜像优先，国内快）
         urls = []
-        if official_url:
-            urls.append(("Adoptium 官方", official_url))
         if pkg_name:
-            for mirror_tpl in self.FALLBACK_MIRRORS:
-                mirror_url = mirror_tpl.format(
+            for src_label, tpl in self.JAVA_MIRRORS:
+                mirror_url = tpl.format(
                     major=major_version, arch=arch, os=os_key, filename=pkg_name
                 )
-                urls.append(("镜像站", mirror_url))
+                urls.append((src_label, mirror_url))
+        if official_url:
+            urls.append(("GitHub Releases", official_url))
 
-        # 步骤3: 下载 + 解压
+        # 步骤3: 依次尝试下载 + 解压
         runtime_dir = Path(self.minecraft_dir) / "runtime" / f"jdk-{major_version}"
         runtime_dir.mkdir(parents=True, exist_ok=True)
 
         last_error = ""
         for src_name, url in urls:
             try:
-                cb_status(f"从 {src_name} 下载 Java {major_version}...")
+                cb_status(f"正在从 {src_name} 下载 Java {major_version}...")
                 zip_path = runtime_dir / f"jdk-{major_version}.zip"
                 self._download_file_with_progress(url, str(zip_path), cb_status, cb_progress, cb_max)
 
-                cb_status(f"解压 Java {major_version}...")
+                if zip_path.stat().st_size < 500_000:
+                    raise Exception("下载文件过小，可能为错误页或阻断页")
+
+                cb_status(f"正在解压 Java {major_version}...")
                 cb_max(0)
                 cb_progress(0)
                 extract_dir = runtime_dir / "extracted"
@@ -288,7 +462,7 @@ class LauncherBackend:
                 last_error = f"{src_name}: {e}"
                 continue
 
-        return None, last_error or "所有下载源均失败"
+        return None, last_error or "所有下载源均已尝试失败"
 
     @staticmethod
     def _download_file_with_progress(url, dest, cb_status, cb_progress, cb_max):
@@ -322,15 +496,19 @@ class LauncherBackend:
 
     @staticmethod
     def _find_java_in_dir(base_dir):
-        """在解压目录中递归查找 javaw.exe 或 java"""
-        exe_name = "javaw.exe" if platform.system() == "Windows" else "java"
+        """在解压目录中递归查找 JDK。Windows 优先 java.exe，便于 subprocess -version 检测版本。"""
+        is_win = platform.system() == "Windows"
         for root, dirs, files in os.walk(str(base_dir)):
-            if exe_name in files:
-                return os.path.join(root, exe_name)
-            if "java" in files and platform.system() != "Windows":
-                java_path = os.path.join(root, "java")
-                if os.access(java_path, os.X_OK):
-                    return java_path
+            if is_win:
+                if "java.exe" in files:
+                    return os.path.join(root, "java.exe")
+                if "javaw.exe" in files:
+                    return os.path.join(root, "javaw.exe")
+            else:
+                if "java" in files:
+                    java_path = os.path.join(root, "java")
+                    if os.access(java_path, os.X_OK):
+                        return java_path
         return None
 
     # ---- Java 版本解析 ----
@@ -339,7 +517,8 @@ class LauncherBackend:
         try:
             result = subprocess.run(
                 [java_path, "-version"],
-                capture_output=True, text=True, timeout=5
+                capture_output=True, text=True, timeout=5,
+                creationflags=_NO_WINDOW,
             )
             output = (result.stderr or "") + (result.stdout or "")
             for line in output.splitlines():
@@ -449,7 +628,8 @@ class LauncherBackend:
         # 3. PATH（where/which 找到的所有条目）
         try:
             cmd = ["where", "java", "javaw"] if is_win else ["which", "-a", "java"]
-            r = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=5,
+                              creationflags=_NO_WINDOW)
             for line in r.stdout.strip().splitlines():
                 line = line.strip()
                 if line:
@@ -590,18 +770,26 @@ class LauncherBackend:
     # ---- Minecraft 版本 → 最低 Java 版本 ----
     @staticmethod
     def get_min_java_for_mc(mc_version):
+        """Minecraft 版本 → 最低 Java 版本 精确映射"""
         try:
             parts = mc_version.split(".")
             if parts[0] == "1":
-                major = int(parts[1])
+                major, minor = int(parts[1]), int(parts[2]) if len(parts) >= 3 else 0
+                # 1.20.5+ → Java 21 (Mojang 从 24w14a 起强制要求)
+                if major == 20 and minor >= 5:
+                    return 21
                 if major >= 21:
                     return 21
-                elif major >= 18:
+                # 1.18+ → Java 17
+                if major >= 18:
                     return 17
-                elif major >= 17:
+                # 1.17 → Java 16
+                if major >= 17:
                     return 16
+                # ≤1.16.5 → Java 8
                 return 8
             else:
+                # 新版命名规则 (如 26.1) → 尝试读取 version.json
                 return LauncherBackend._detect_java_from_jvm_args(mc_version)
         except (ValueError, IndexError):
             return 8
@@ -622,10 +810,9 @@ class LauncherBackend:
         except Exception:
             pass
         try:
-            parts = mc_version.split(".")
-            first = int(parts[0])
+            first = int(mc_version.split(".")[0])
             if first >= 26:
-                return 22
+                return 25
             return 21
         except (ValueError, IndexError):
             return 21
