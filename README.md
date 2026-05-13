@@ -86,7 +86,6 @@ MCL-Launcher/
 - **customtkinter** — 现代化 UI 框架
 - **minecraft-launcher-lib** — Minecraft 启动库
 - **PyInstaller** — 打包为 exe
-- **Modrinth API / CurseForge API** — 模组搜索
 
 ## 📄 开源协议
 
