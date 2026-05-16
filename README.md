@@ -55,7 +55,7 @@ MCL-Launcher/
     ├── backend.py        # 后端核心逻辑
     ├── mod_loader.py     # 模组加载器管理
     ├── modrinth.py       # Modrinth API
-    ├── i18n.py           # 双语
+    ├── i18n.py           # 语言
     └── ui/               # 用户界面
         ├── app.py        # 主窗口
         ├── pages.py      # 页面布局
@@ -63,13 +63,6 @@ MCL-Launcher/
 ```
 
 > 完整结构见 [PROJECT_STRUCTURE.md](PROJECT_STRUCTURE.md)
-
-## 🛠️ 技术栈
-
-- **Python 3.x** — 核心语言
-- **customtkinter** — 现代化 UI 框架
-- **minecraft-launcher-lib** — Minecraft 启动库
-- **PyInstaller** — 打包为 exe
 
 ## 📄 开源协议
 
