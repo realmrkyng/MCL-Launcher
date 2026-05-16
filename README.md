@@ -16,7 +16,7 @@
 
 ## 🚀 快速开始
 
-### 下载即用
+### 下载
 
 从 [Releases](https://github.com/realmrkyng/MCL-Launcher/releases/latest) 下载最新版 exe，双击运行即可。
 
