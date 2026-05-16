@@ -13,6 +13,9 @@
 
 ---
 
+<p align="center">
+  <i>Minecraft 是一款值得购买的游戏，请支持正版。</i>
+</p>
 
 ## 🚀 快速开始
 
@@ -67,9 +70,3 @@ MCL-Launcher/
 ## 📄 开源协议
 
 MIT License © 2026 [MrKyng](https://github.com/realmrkyng)
-
----
-
-<p align="center">
-  <i>Minecraft 是一款值得购买的游戏，请支持正版。</i>
-</p>
